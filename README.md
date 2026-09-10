@@ -1,0 +1,39 @@
+# Game Translator - Android In-Game Overlay Translator
+
+แอปพลิเคชัน Android น้ำหนักเบา สำหรับแปลข้อความภาษาอังกฤษในเกมเป็นภาษาไทยแบบเรียลไทม์ ด้วย Floating Bubble Overlay, ML Kit OCR และ DeepSeek API
+
+---
+
+## 🚀 วิธีดาวน์โหลดและติดตั้ง APK (How to Download & Install)
+
+### 1. ดาวน์โหลดผ่าน GitHub Releases
+โปรเจกต์นี้ตั้งค่า **GitHub Actions CI/CD** ไว้ที่ `.github/workflows/release.yml` เรียบร้อยแล้ว:
+1. เมื่อคุณ Push โค้ดนี้ขึ้น GitHub
+2. ไปที่แท็บ **Actions** บน GitHub แล้วเลือก **Build and Release APK** -> กดปุ่ม **Run workflow** (หรือสร้าง Release Tag เช่น `v1.0.0`)
+3. GitHub Actions จะทำการ Build ไฟล์ `GameTranslator-debug.apk` ให้อัตโนมัติ และนำไปใส่ไว้ในส่วน **Releases** ด้านขวาของหน้า GitHub Repository ให้ดาวน์โหลดได้ทันที
+
+### 2. ดาวน์โหลดตรงจาก Google AI Studio
+- คุณสามารถคลิกเมนู **Settings** หรือแถบเครื่องมือด้านบนของ Google AI Studio แล้วเลือกดาวน์โหลดไฟล์ **APK** ได้โดยตรงโดยไม่ต้องรอ GitHub Actions
+
+---
+
+## ⚙️ การตั้งค่า API Key
+แอปนี้รองรับการใส่ DeepSeek API Key ได้ 2 ทาง:
+1. **ใส่ในแอปโดยตรง (แนะนำ):** เปิดแอปแล้วนำ DeepSeek API Key (`sk-...`) วางในช่อง "DeepSeek API Key" ได้ทันที
+2. **ใส่ผ่านไฟล์ `.env`:** ใส่ `DEEPSEEK_API_KEY=your_key_here` ในไฟล์ `.env` ก่อนคอมไพล์
+
+---
+
+## 🔑 สิทธิ์ที่จำเป็น (Required Permissions)
+- **Display over other apps (`SYSTEM_ALERT_WINDOW`):** เพื่อให้ปุ่ม Bubble ลอยทับหน้าจอเกมได้
+- **Screen Capture (`MediaProjection`):** เพื่อจับภาพหน้าจอเฉพาะพื้นที่ Bounding Box และอ่านตัวอักษรด้วย OCR
+- **Internet (`INTERNET`):** เพื่อส่งข้อความไปแปลผ่าน DeepSeek API
+
+---
+
+## 🛠️ ฟีเจอร์หลัก (Core Features)
+- **Floating Bubble UI:** ปุ่มลอยขนาดเล็ก แตะหนึ่งครั้งเพื่อจับภาพและแปล แตะอีกครั้งเพื่อซ่อน
+- **Bounding Box Crop:** สามารถกำหนดพื้นที่จับภาพได้ตามเปอร์เซ็นต์หน้าจอ เช่น `0,0,100,100` (เต็มจอ) หรือ `10,70,80,20` (เฉพาะแถบข้อความด้านล่าง)
+- **DeepSeek API & Model Selection:** เลือกรุ่นโมเดลที่ต้องการ และกดปุ่มดึงรายการโมเดลล่าสุดได้
+- **Context / Pronouns Customization:** ปรับสรรพนามและธีมของเกม เช่น Neutral, I/You, Master/Servant, Hero/Villain
+- **Smart 100% Match Cache:** หากข้อความ OCR เหมือนเดิม 100% จะแสดงผลลัพธ์เดิมทันทีโดยไม่เสีย Token ซ้ำ

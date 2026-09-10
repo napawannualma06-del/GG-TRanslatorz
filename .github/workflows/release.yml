@@ -1,0 +1,83 @@
+name: Build and Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Release version name (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build & Release Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare Build Configuration
+        run: |
+          # Ensure .env exists with placeholder if not provided via secrets
+          if [ ! -f .env ]; then
+            cp .env.example .env 2>/dev/null || echo "DEEPSEEK_API_KEY=" > .env
+          fi
+          # Ensure gradlew wrapper exists
+          if [ ! -f gradlew ]; then
+            gradle wrapper
+          fi
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Rename APK for Release
+        run: |
+          mkdir -p release-artifacts
+          find app/build/outputs/apk/debug -name "*.apk" -exec cp {} release-artifacts/GameTranslator-debug.apk \;
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameTranslator-debug-apk
+          path: release-artifacts/GameTranslator-debug.apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.version_name || 'v1.0.0' }}
+          name: Game Translator Release ${{ github.ref_name || inputs.version_name || 'v1.0.0' }}
+          draft: false
+          prerelease: false
+          files: release-artifacts/GameTranslator-debug.apk
+          body: |
+            ## 🎮 Game Translator - Android In-Game Overlay Translator
+
+            ### 📦 Download & Installation
+            - Download `GameTranslator-debug.apk` below and install it on your Android device.
+            - Allow **Display over other apps** (SYSTEM_ALERT_WINDOW) permission when prompted.
+            - Allow **Screen capture / MediaProjection** permission when starting the floating service.
+
+            ### ✨ Features
+            - Floating overlay bubble for instant in-game text translation.
+            - OCR powered by on-device ML Kit.
+            - DeepSeek AI Translation with customizable game themes & pronouns.
+            - 100% OCR match caching to minimize token usage.
+            - In-app API Key configuration.

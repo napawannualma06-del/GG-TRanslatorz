@@ -16,11 +16,17 @@ class SettingsRepository(private val context: Context) {
         val SELECTED_MODEL = stringPreferencesKey("selected_model")
         val PRONOUN_THEME = stringPreferencesKey("pronoun_theme")
         val BOUNDING_BOX = stringPreferencesKey("bounding_box") // "x,y,w,h"
+        val API_KEY = stringPreferencesKey("api_key")
     }
 
     val selectedModel: Flow<String> = context.dataStore.data.map { it[SELECTED_MODEL] ?: "deepseek-chat" }
     val pronounTheme: Flow<String> = context.dataStore.data.map { it[PRONOUN_THEME] ?: "Neutral" }
     val boundingBox: Flow<String> = context.dataStore.data.map { it[BOUNDING_BOX] ?: "0,0,100,100" } // percentages
+    val apiKey: Flow<String> = context.dataStore.data.map { it[API_KEY] ?: "" }
+
+    suspend fun updateApiKey(key: String) {
+        context.dataStore.edit { it[API_KEY] = key }
+    }
 
     suspend fun updateModel(model: String) {
         context.dataStore.edit { it[SELECTED_MODEL] = model }

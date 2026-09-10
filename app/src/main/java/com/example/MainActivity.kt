@@ -116,6 +116,7 @@ fun MainScreen(
     var selectedModel by remember { mutableStateOf("deepseek-chat") }
     var pronounTheme by remember { mutableStateOf("Neutral") }
     var boundingBox by remember { mutableStateOf("0,0,100,100") }
+    var apiKeyInput by remember { mutableStateOf("") }
     
     var availableModels by remember { mutableStateOf(listOf("deepseek-chat")) }
     var modelsLoading by remember { mutableStateOf(false) }
@@ -124,6 +125,7 @@ fun MainScreen(
         selectedModel = settingsRepo.selectedModel.first()
         pronounTheme = settingsRepo.pronounTheme.first()
         boundingBox = settingsRepo.boundingBox.first()
+        apiKeyInput = settingsRepo.apiKey.first()
     }
 
     Column(
@@ -152,6 +154,19 @@ fun MainScreen(
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
+        // API Key Field
+        OutlinedTextField(
+            value = apiKeyInput,
+            onValueChange = {
+                apiKeyInput = it
+                coroutineScope.launch { settingsRepo.updateApiKey(it) }
+            },
+            label = { Text("DeepSeek API Key (Optional if set in .env)") },
+            placeholder = { Text("sk-...") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+
         // Models
         var modelsDropdownExpanded by remember { mutableStateOf(false) }
         Box {
@@ -179,8 +194,8 @@ fun MainScreen(
             coroutineScope.launch {
                 modelsLoading = true
                 try {
-                    val apiKey = BuildConfig.DEEPSEEK_API_KEY
-                    val response = RetrofitClient.api.getModels("Bearer $apiKey")
+                    val keyToUse = apiKeyInput.trim().ifEmpty { BuildConfig.DEEPSEEK_API_KEY }
+                    val response = RetrofitClient.api.getModels("Bearer $keyToUse")
                     availableModels = response.data.map { it.id }
                 } catch (e: Exception) {
                     e.printStackTrace()

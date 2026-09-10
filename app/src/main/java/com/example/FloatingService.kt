@@ -1,5 +1,17 @@
 package com.example
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Button
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import java.util.Locale
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -38,8 +50,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,6 +105,11 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
     private var showTranslation by mutableStateOf(false)
     private var currentTranslation by mutableStateOf("")
     private var isTranslating by mutableStateOf(false)
+    
+    private var bubbleX = 0
+    private var bubbleY = 100
+    private var isSelectionMode by mutableStateOf(false)
+    private var currentBoundingBox by mutableStateOf("0,0,100,100")
 
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
 
@@ -103,6 +121,10 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
         savedStateRegistryController.performRestore(null)
         settingsRepo = SettingsRepository(this)
         
+        lifecycleScope.launch {
+            settingsRepo.boundingBox.collect { currentBoundingBox = it }
+        }
+
         createNotificationChannel()
         startForeground(1, buildNotification())
         
@@ -126,8 +148,8 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.TOP or Gravity.START
-        params.x = 0
-        params.y = 100
+        params.x = bubbleX
+        params.y = bubbleY
 
         composeView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@FloatingService)
@@ -135,22 +157,52 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
             
             setContent {
                 MaterialTheme {
-                    FloatingUI(
-                        showTranslation = showTranslation,
-                        translation = currentTranslation,
-                        isTranslating = isTranslating,
-                        onTap = { handleTap() },
-                        onDrag = { dx, dy ->
-                            params.x += dx.toInt()
-                            params.y += dy.toInt()
-                            windowManager.updateViewLayout(composeView, params)
-                        }
-                    )
+                    if (isSelectionMode) {
+                        SelectionOverlay(
+                            initialBox = currentBoundingBox,
+                            onSave = { newBox ->
+                                lifecycleScope.launch { settingsRepo.updateBoundingBox(newBox) }
+                                enableSelectionMode(false)
+                            },
+                            onCancel = { enableSelectionMode(false) }
+                        )
+                    } else {
+                        FloatingUI(
+                            showTranslation = showTranslation,
+                            translation = currentTranslation,
+                            isTranslating = isTranslating,
+                            onTap = { handleTap() },
+                            onLongPress = { enableSelectionMode(true) },
+                            onDrag = { dx, dy ->
+                                bubbleX += dx.toInt()
+                                bubbleY += dy.toInt()
+                                params.x = bubbleX
+                                params.y = bubbleY
+                                windowManager.updateViewLayout(composeView, params)
+                            }
+                        )
+                    }
                 }
             }
         }
 
         windowManager.addView(composeView, params)
+    }
+
+    private fun enableSelectionMode(enabled: Boolean) {
+        isSelectionMode = enabled
+        if (enabled) {
+            params.width = WindowManager.LayoutParams.MATCH_PARENT
+            params.height = WindowManager.LayoutParams.MATCH_PARENT
+            params.x = 0
+            params.y = 0
+        } else {
+            params.width = WindowManager.LayoutParams.WRAP_CONTENT
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT
+            params.x = bubbleX
+            params.y = bubbleY
+        }
+        windowManager.updateViewLayout(composeView, params)
     }
 
     private fun handleTap() {
@@ -225,8 +277,9 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
     private suspend fun performTranslation(text: String): String {
         return withContext(Dispatchers.IO) {
             try {
-                val apiKey = BuildConfig.DEEPSEEK_API_KEY
-                if (apiKey.isNullOrEmpty()) return@withContext "API Key missing in .env"
+                val userKey = settingsRepo.apiKey.first()
+                val apiKey = userKey.trim().ifEmpty { BuildConfig.DEEPSEEK_API_KEY }
+                if (apiKey.isNullOrEmpty()) return@withContext "API Key missing! Please set in app settings."
 
                 val model = settingsRepo.selectedModel.first()
                 val pronoun = settingsRepo.pronounTheme.first()
@@ -344,6 +397,7 @@ fun FloatingUI(
     translation: String,
     isTranslating: Boolean,
     onTap: () -> Unit,
+    onLongPress: () -> Unit,
     onDrag: (Float, Float) -> Unit
 ) {
     Box(
@@ -354,9 +408,14 @@ fun FloatingUI(
                     onDrag(dragAmount.x, dragAmount.y)
                 }
             }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onLongPress = { onLongPress() }
+                )
+            }
             .clip(if (showTranslation) RoundedCornerShape(8.dp) else CircleShape)
             .background(Color.Black.copy(alpha = 0.7f))
-            .clickable { onTap() }
             .padding(if (showTranslation) 16.dp else 12.dp)
     ) {
         if (showTranslation) {
@@ -378,6 +437,112 @@ fun FloatingUI(
                 tint = Color.White,
                 modifier = Modifier.size(24.dp)
             )
+        }
+    }
+}
+
+@Composable
+fun SelectionOverlay(
+    initialBox: String,
+    onSave: (String) -> Unit,
+    onCancel: () -> Unit
+) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+    ) {
+        val density = LocalDensity.current
+        val screenW = constraints.maxWidth.toFloat()
+        val screenH = constraints.maxHeight.toFloat()
+
+        // Parse initial box string
+        val parts = initialBox.split(",").mapNotNull { it.toFloatOrNull() }
+        val initX = if (parts.size == 4) parts[0] / 100f * screenW else 0f
+        val initY = if (parts.size == 4) parts[1] / 100f * screenH else 0f
+        val initW = if (parts.size == 4) parts[2] / 100f * screenW else screenW
+        val initH = if (parts.size == 4) parts[3] / 100f * screenH else screenH
+
+        var offsetX by remember { mutableStateOf(initX) }
+        var offsetY by remember { mutableStateOf(initY) }
+        var width by remember { mutableStateOf(initW) }
+        var height by remember { mutableStateOf(initH) }
+
+        // The bounding box
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.toInt(), offsetY.toInt()) }
+                .size(
+                    with(density) { width.toDp() },
+                    with(density) { height.toDp() }
+                )
+                .border(2.dp, Color.Green)
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        offsetX = (offsetX + dragAmount.x).coerceIn(0f, screenW - width)
+                        offsetY = (offsetY + dragAmount.y).coerceIn(0f, screenH - height)
+                    }
+                }
+        ) {
+            // Top Left Handle
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset((-12).dp, (-12).dp)
+                    .size(24.dp)
+                    .background(Color.White, CircleShape)
+                    .border(2.dp, Color.Green, CircleShape)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            val newOffsetX = (offsetX + dragAmount.x).coerceIn(0f, offsetX + width - 100f)
+                            val newOffsetY = (offsetY + dragAmount.y).coerceIn(0f, offsetY + height - 100f)
+                            width += (offsetX - newOffsetX)
+                            height += (offsetY - newOffsetY)
+                            offsetX = newOffsetX
+                            offsetY = newOffsetY
+                        }
+                    }
+            )
+            // Bottom Right Handle
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(12.dp, 12.dp)
+                    .size(24.dp)
+                    .background(Color.White, CircleShape)
+                    .border(2.dp, Color.Green, CircleShape)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            width = (width + dragAmount.x).coerceIn(100f, screenW - offsetX)
+                            height = (height + dragAmount.y).coerceIn(100f, screenH - offsetY)
+                        }
+                    }
+            )
+        }
+
+        // Action Buttons
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 48.dp)
+        ) {
+            Button(onClick = onCancel) {
+                Text("Cancel")
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Button(onClick = {
+                val px = (offsetX / screenW * 100).coerceIn(0f, 100f)
+                val py = (offsetY / screenH * 100).coerceIn(0f, 100f)
+                val pw = (width / screenW * 100).coerceIn(1f, 100f - px)
+                val ph = (height / screenH * 100).coerceIn(1f, 100f - py)
+                val newBoxStr = String.format(Locale.US, "%.1f,%.1f,%.1f,%.1f", px, py, pw, ph)
+                onSave(newBoxStr)
+            }) {
+                Text("Save Crop")
+            }
         }
     }
 }
