@@ -135,20 +135,20 @@ fun MainScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Game Translator Settings", style = MaterialTheme.typography.headlineMedium)
+        Text("การตั้งค่าตัวแปลเกม", style = MaterialTheme.typography.headlineMedium)
 
         if (!isOverlayGranted) {
             Button(onClick = onRequestOverlay) {
-                Text("Grant Overlay Permission")
+                Text("อนุญาตให้แสดงทับแอปอื่น (Overlay)")
             }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onStartService, enabled = isOverlayGranted) {
-                Text("Start Floating Translator")
+                Text("เปิดใช้งานบับเบิลแปลภาษา")
             }
             Button(onClick = onStopService) {
-                Text("Stop Service")
+                Text("ปิดการใช้งาน")
             }
         }
 
@@ -161,7 +161,7 @@ fun MainScreen(
                 apiKeyInput = it
                 coroutineScope.launch { settingsRepo.updateApiKey(it) }
             },
-            label = { Text("DeepSeek API Key (Optional if set in .env)") },
+            label = { Text("DeepSeek API Key (ไม่บังคับถ้าใส่ใน .env แล้ว)") },
             placeholder = { Text("sk-...") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
@@ -171,7 +171,7 @@ fun MainScreen(
         var modelsDropdownExpanded by remember { mutableStateOf(false) }
         Box {
             OutlinedButton(onClick = { modelsDropdownExpanded = true }) {
-                Text("Model: $selectedModel")
+                Text("โมเดล: $selectedModel")
             }
             DropdownMenu(
                 expanded = modelsDropdownExpanded,
@@ -204,7 +204,7 @@ fun MainScreen(
                 }
             }
         }, enabled = !modelsLoading) {
-            Text(if (modelsLoading) "Loading Models..." else "Update Models from API")
+            Text(if (modelsLoading) "กำลังโหลดโมเดล..." else "อัปเดตโมเดลจาก API")
         }
 
         // Pronoun Theme Dropdown
@@ -212,7 +212,7 @@ fun MainScreen(
         var themesDropdownExpanded by remember { mutableStateOf(false) }
         Box {
             OutlinedButton(onClick = { themesDropdownExpanded = true }) {
-                Text("Theme: $pronounTheme")
+                Text("ธีม/สรรพนาม: $pronounTheme")
             }
             DropdownMenu(
                 expanded = themesDropdownExpanded,
@@ -230,21 +230,5 @@ fun MainScreen(
                 }
             }
         }
-
-        // Bounding Box
-        OutlinedTextField(
-            value = boundingBox,
-            onValueChange = { 
-                boundingBox = it
-                coroutineScope.launch { settingsRepo.updateBoundingBox(it) }
-            },
-            label = { Text("Bounding Box (X,Y,W,H %)") },
-            modifier = Modifier.fillMaxWidth()
-        )
-        Text(
-            "Default 0,0,100,100 means full screen capture area.\n" +
-            "Set e.g. 10,70,80,20 for bottom 20% area.",
-            style = MaterialTheme.typography.bodySmall
-        )
     }
 }

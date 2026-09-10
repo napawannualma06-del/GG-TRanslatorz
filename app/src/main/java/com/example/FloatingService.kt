@@ -374,7 +374,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 "floating_service",
-                "Translation Service",
+                "ระบบแปลภาษา",
                 NotificationManager.IMPORTANCE_LOW
             )
             val manager = getSystemService(NotificationManager::class.java)
@@ -384,8 +384,8 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
 
     private fun buildNotification(): Notification {
         return NotificationCompat.Builder(this, "floating_service")
-            .setContentTitle("Translation Active")
-            .setContentText("Floating widget is running")
+            .setContentTitle("ตัวแปลภาษากำลังทำงาน")
+            .setContentText("บับเบิลแปลภาษากำลังทำงานอยู่บนหน้าจอ")
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
     }
@@ -530,7 +530,7 @@ fun SelectionOverlay(
                 .padding(bottom = 48.dp)
         ) {
             Button(onClick = onCancel) {
-                Text("Cancel")
+                Text("ยกเลิก")
             }
             Spacer(modifier = Modifier.width(16.dp))
             Button(onClick = {
@@ -541,7 +541,7 @@ fun SelectionOverlay(
                 val newBoxStr = String.format(Locale.US, "%.1f,%.1f,%.1f,%.1f", px, py, pw, ph)
                 onSave(newBoxStr)
             }) {
-                Text("Save Crop")
+                Text("บันทึกกรอบข้อความ")
             }
         }
     }
