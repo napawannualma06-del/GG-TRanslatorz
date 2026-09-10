@@ -7,10 +7,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,10 +40,15 @@ class MainActivity : ComponentActivity() {
                 putExtra("RESULT_CODE", result.resultCode)
                 putExtra("DATA", result.data)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Error starting FloatingService", e)
+                Toast.makeText(this, "ไม่สามารถเริ่มบริการได้: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -115,8 +124,8 @@ fun MainScreen(
     
     var selectedModel by remember { mutableStateOf("deepseek-chat") }
     var pronounTheme by remember { mutableStateOf("Neutral") }
-    var boundingBox by remember { mutableStateOf("0,0,100,100") }
     var apiKeyInput by remember { mutableStateOf("") }
+    var autoHideSeconds by remember { mutableStateOf(5) }
     
     var availableModels by remember { mutableStateOf(listOf("deepseek-chat")) }
     var modelsLoading by remember { mutableStateOf(false) }
@@ -124,13 +133,14 @@ fun MainScreen(
     LaunchedEffect(Unit) {
         selectedModel = settingsRepo.selectedModel.first()
         pronounTheme = settingsRepo.pronounTheme.first()
-        boundingBox = settingsRepo.boundingBox.first()
         apiKeyInput = settingsRepo.apiKey.first()
+        autoHideSeconds = settingsRepo.autoHideSeconds.first()
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -230,5 +240,43 @@ fun MainScreen(
                 }
             }
         }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+        // Auto-hide Duration Settings
+        val autoHideOptions = listOf(
+            0 to "ไม่ซ่อนอัตโนมัติ (แตะเพื่อปิดเอง)",
+            3 to "3 วินาที",
+            5 to "5 วินาที (ค่าเริ่มต้น)",
+            7 to "7 วินาที",
+            10 to "10 วินาที",
+            15 to "15 วินาที"
+        )
+        var autoHideDropdownExpanded by remember { mutableStateOf(false) }
+        val currentLabel = autoHideOptions.firstOrNull { it.first == autoHideSeconds }?.second ?: "$autoHideSeconds วินาที"
+
+        Text("เวลาแสดงผลก่อนข้อความหายไป:", style = MaterialTheme.typography.titleSmall)
+        Box {
+            OutlinedButton(onClick = { autoHideDropdownExpanded = true }) {
+                Text(currentLabel)
+            }
+            DropdownMenu(
+                expanded = autoHideDropdownExpanded,
+                onDismissRequest = { autoHideDropdownExpanded = false }
+            ) {
+                autoHideOptions.forEach { (seconds, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            autoHideSeconds = seconds
+                            coroutineScope.launch { settingsRepo.updateAutoHideSeconds(seconds) }
+                            autoHideDropdownExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }

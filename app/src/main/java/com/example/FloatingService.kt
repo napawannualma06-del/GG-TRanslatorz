@@ -86,7 +86,20 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 
-class FloatingService : LifecycleService(), SavedStateRegistryOwner {
+import android.os.Handler
+import android.os.Looper
+import android.content.pm.ServiceInfo
+import androidx.core.app.ServiceCompat
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+
+class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelStoreOwner {
+
+    private val mViewModelStore = ViewModelStore()
+    override val viewModelStore: ViewModelStore get() = mViewModelStore
 
     private lateinit var windowManager: WindowManager
     private lateinit var composeView: ComposeView
@@ -100,6 +113,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
     private lateinit var settingsRepo: SettingsRepository
     private var lastExtractedText: String? = null
     private var cachedTranslation: String? = null
+    private var autoHideJob: Job? = null
 
     // Compose states
     private var showTranslation by mutableStateOf(false)
@@ -126,7 +140,21 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
         }
 
         createNotificationChannel()
-        startForeground(1, buildNotification())
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceCompat.startForeground(
+                    this,
+                    1,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                )
+            } else {
+                startForeground(1, buildNotification())
+            }
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error calling startForeground", e)
+            startForeground(1, buildNotification())
+        }
         
         setupFloatingView()
     }
@@ -154,6 +182,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
         composeView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@FloatingService)
             setViewTreeSavedStateRegistryOwner(this@FloatingService)
+            setViewTreeViewModelStoreOwner(this@FloatingService)
             
             setContent {
                 MaterialTheme {
@@ -178,7 +207,11 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
                                 bubbleY += dy.toInt()
                                 params.x = bubbleX
                                 params.y = bubbleY
-                                windowManager.updateViewLayout(composeView, params)
+                                try {
+                                    windowManager.updateViewLayout(composeView, params)
+                                } catch (e: Exception) {
+                                    Log.e("FloatingService", "Error updating layout on drag", e)
+                                }
                             }
                         )
                     }
@@ -186,7 +219,11 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
             }
         }
 
-        windowManager.addView(composeView, params)
+        try {
+            windowManager.addView(composeView, params)
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error adding composeView to windowManager", e)
+        }
     }
 
     private fun enableSelectionMode(enabled: Boolean) {
@@ -202,63 +239,95 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
             params.x = bubbleX
             params.y = bubbleY
         }
-        windowManager.updateViewLayout(composeView, params)
+        try {
+            windowManager.updateViewLayout(composeView, params)
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error updating selection mode layout", e)
+        }
     }
 
     private fun handleTap() {
+        autoHideJob?.cancel()
         if (showTranslation) {
-            // Hide translation
+            // Hide translation manually
             showTranslation = false
         } else {
             // Trigger capture
             isTranslating = true
             lifecycleScope.launch {
-                captureAndTranslate()
+                try {
+                    captureAndTranslate()
+                } catch (e: Throwable) {
+                    Log.e("FloatingService", "Error in captureAndTranslate launch", e)
+                    withContext(Dispatchers.Main) {
+                        resetState("เกิดข้อผิดพลาด: ${e.localizedMessage ?: "ไม่ทราบสาเหตุ"}")
+                    }
+                }
             }
         }
     }
 
     private suspend fun captureAndTranslate() {
-        // Short delay to allow button state to update and maybe hide
-        kotlinx.coroutines.delay(200)
+        withContext(Dispatchers.IO) {
+            try {
+                // Short delay to allow button state to update
+                delay(200)
 
-        val bitmap = captureScreen() ?: return resetState("Failed to capture screen")
-        
-        // Bounding box cropping
-        val boxStr = settingsRepo.boundingBox.first()
-        val parts = boxStr.split(",").mapNotNull { it.toFloatOrNull() }
-        val croppedBitmap = if (parts.size == 4) {
-            val (px, py, pw, ph) = parts
-            val bx = (px / 100f * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
-            val by = (py / 100f * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
-            val bw = (pw / 100f * bitmap.width).toInt().coerceIn(1, bitmap.width - bx)
-            val bh = (ph / 100f * bitmap.height).toInt().coerceIn(1, bitmap.height - by)
-            Bitmap.createBitmap(bitmap, bx, by, bw, bh)
-        } else bitmap
+                val bitmap = captureScreen()
+                if (bitmap == null) {
+                    withContext(Dispatchers.Main) {
+                        resetState("ไม่สามารถจับภาพหน้าจอได้ (กรุณาเปิดบริการใหม่)")
+                    }
+                    return@withContext
+                }
+                
+                // Bounding box cropping
+                val boxStr = settingsRepo.boundingBox.first()
+                val parts = boxStr.split(",").mapNotNull { it.toFloatOrNull() }
+                val croppedBitmap = if (parts.size == 4) {
+                    val (px, py, pw, ph) = parts
+                    val bx = (px / 100f * bitmap.width).toInt().coerceIn(0, (bitmap.width - 1).coerceAtLeast(0))
+                    val by = (py / 100f * bitmap.height).toInt().coerceIn(0, (bitmap.height - 1).coerceAtLeast(0))
+                    val bw = (pw / 100f * bitmap.width).toInt().coerceIn(1, (bitmap.width - bx).coerceAtLeast(1))
+                    val bh = (ph / 100f * bitmap.height).toInt().coerceIn(1, (bitmap.height - by).coerceAtLeast(1))
+                    try {
+                        Bitmap.createBitmap(bitmap, bx, by, bw, bh)
+                    } catch (e: Exception) {
+                        bitmap
+                    }
+                } else bitmap
 
-        val image = InputImage.fromBitmap(croppedBitmap, 0)
-        
-        try {
-            val result = com.google.android.gms.tasks.Tasks.await(textRecognizer.process(image))
-            val text = result.text.trim()
-            if (text.isEmpty()) {
-                resetState("No text found")
-                return
+                val image = InputImage.fromBitmap(croppedBitmap, 0)
+                
+                val result = com.google.android.gms.tasks.Tasks.await(textRecognizer.process(image))
+                val text = result.text.trim()
+                if (text.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        resetState("ไม่พบข้อความในพื้นที่ที่กำหนด")
+                    }
+                    return@withContext
+                }
+
+                if (text == lastExtractedText && cachedTranslation != null) {
+                    withContext(Dispatchers.Main) {
+                        showResult(cachedTranslation!!)
+                    }
+                    return@withContext
+                }
+
+                lastExtractedText = text
+                val translation = performTranslation(text)
+                cachedTranslation = translation
+                withContext(Dispatchers.Main) {
+                    showResult(translation)
+                }
+
+            } catch (e: Exception) {
+                Log.e("FloatingService", "Error during translation", e)
+                withContext(Dispatchers.Main) {
+                    resetState("ข้อผิดพลาด: ${e.message}")
+                }
             }
-
-            if (text == lastExtractedText && cachedTranslation != null) {
-                showResult(cachedTranslation!!)
-                return
-            }
-
-            lastExtractedText = text
-            val translation = performTranslation(text)
-            cachedTranslation = translation
-            showResult(translation)
-
-        } catch (e: Exception) {
-            Log.e("FloatingService", "Error during translation", e)
-            resetState("Error: ${e.message}")
         }
     }
 
@@ -266,12 +335,31 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
         isTranslating = false
         currentTranslation = msg
         showTranslation = true
+        scheduleAutoHide()
     }
 
     private fun showResult(translation: String) {
         isTranslating = false
         currentTranslation = translation
         showTranslation = true
+        scheduleAutoHide()
+    }
+
+    private fun scheduleAutoHide() {
+        autoHideJob?.cancel()
+        autoHideJob = lifecycleScope.launch {
+            try {
+                val seconds = settingsRepo.autoHideSeconds.first()
+                if (seconds > 0) {
+                    delay(seconds * 1000L)
+                    withContext(Dispatchers.Main) {
+                        showTranslation = false
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("FloatingService", "Error in autoHideJob", e)
+            }
+        }
     }
 
     private suspend fun performTranslation(text: String): String {
@@ -279,7 +367,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
             try {
                 val userKey = settingsRepo.apiKey.first()
                 val apiKey = userKey.trim().ifEmpty { BuildConfig.DEEPSEEK_API_KEY }
-                if (apiKey.isNullOrEmpty()) return@withContext "API Key missing! Please set in app settings."
+                if (apiKey.isNullOrEmpty()) return@withContext "กรุณาใส่ API Key ในหน้าตั้งค่าแอป"
 
                 val model = settingsRepo.selectedModel.first()
                 val pronoun = settingsRepo.pronounTheme.first()
@@ -299,50 +387,64 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
                 )
 
                 val response = RetrofitClient.api.translateText("Bearer $apiKey", request)
-                response.choices.firstOrNull()?.message?.content?.trim() ?: "No translation"
+                response.choices.firstOrNull()?.message?.content?.trim() ?: "ไม่มีข้อความแปล"
             } catch (e: Exception) {
                 Log.e("FloatingService", "API Error", e)
-                "API Error: ${e.message}"
+                "ข้อผิดพลาด API: ${e.message}"
             }
         }
     }
 
     @SuppressLint("WrongConstant")
     private suspend fun captureScreen(): Bitmap? = withContext(Dispatchers.IO) {
-        if (mediaProjection == null) return@withContext null
+        val proj = mediaProjection ?: return@withContext null
 
-        val displayMetrics = resources.displayMetrics
-        val width = displayMetrics.widthPixels
-        val height = displayMetrics.heightPixels
-        val density = displayMetrics.densityDpi
+        try {
+            val displayMetrics = resources.displayMetrics
+            val width = displayMetrics.widthPixels
+            val height = displayMetrics.heightPixels
+            val density = displayMetrics.densityDpi
 
-        if (imageReader == null) {
-            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-            virtualDisplay = mediaProjection?.createVirtualDisplay(
-                "ScreenCapture",
-                width, height, density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader?.surface, null, null
-            )
-        }
+            if (imageReader == null) {
+                imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            }
+            if (virtualDisplay == null) {
+                virtualDisplay = proj.createVirtualDisplay(
+                    "ScreenCapture",
+                    width, height, density,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    imageReader?.surface, null, null
+                )
+            }
 
-        // Wait a tiny bit for the surface to get an image
-        kotlinx.coroutines.delay(100)
-        
-        val image: Image? = imageReader?.acquireLatestImage()
-        image?.let {
-            val planes = it.planes
-            val buffer: ByteBuffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * width
+            // Retry acquiring image up to 6 times to let VirtualDisplay produce frames
+            var image: Image? = null
+            for (i in 0 until 6) {
+                image = imageReader?.acquireLatestImage()
+                if (image != null) break
+                delay(80)
+            }
 
-            val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-            bitmap.copyPixelsFromBuffer(buffer)
-            it.close()
-            
-            // Crop to actual width if needed due to row padding
-            if (rowPadding == 0) bitmap else Bitmap.createBitmap(bitmap, 0, 0, width, height)
+            if (image == null) {
+                Log.w("FloatingService", "acquireLatestImage returned null after retries")
+                return@withContext null
+            }
+
+            image.use { img ->
+                val planes = img.planes
+                val buffer: ByteBuffer = planes[0].buffer
+                val pixelStride = planes[0].pixelStride
+                val rowStride = planes[0].rowStride
+                val rowPadding = rowStride - pixelStride * width
+
+                val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
+                bitmap.copyPixelsFromBuffer(buffer)
+                
+                if (rowPadding == 0) bitmap else Bitmap.createBitmap(bitmap, 0, 0, width, height)
+            }
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error in captureScreen", e)
+            null
         }
     }
 
@@ -350,11 +452,35 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
         super.onStartCommand(intent, flags, startId)
         
         val resultCode = intent?.getIntExtra("RESULT_CODE", 0) ?: 0
-        val data: Intent? = intent?.getParcelableExtra("DATA")
+        val data: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent?.getParcelableExtra("DATA", Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra("DATA")
+        }
         
         if (resultCode != 0 && data != null) {
-            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = mpm.getMediaProjection(resultCode, data)
+            try {
+                val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                mediaProjection?.stop()
+                mediaProjection = mpm.getMediaProjection(resultCode, data)
+                mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                    override fun onStop() {
+                        super.onStop()
+                        try {
+                            virtualDisplay?.release()
+                            virtualDisplay = null
+                            imageReader?.close()
+                            imageReader = null
+                            mediaProjection = null
+                        } catch (e: Exception) {
+                            Log.e("FloatingService", "Error in onStop callback", e)
+                        }
+                    }
+                }, Handler(Looper.getMainLooper()))
+            } catch (e: Exception) {
+                Log.e("FloatingService", "Error registering MediaProjection", e)
+            }
         }
 
         return Service.START_NOT_STICKY
@@ -362,12 +488,25 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner {
 
     override fun onDestroy() {
         super.onDestroy()
-        virtualDisplay?.release()
-        imageReader?.close()
-        mediaProjection?.stop()
-        if (::composeView.isInitialized) {
-            windowManager.removeView(composeView)
+        autoHideJob?.cancel()
+        try {
+            virtualDisplay?.release()
+            virtualDisplay = null
+            imageReader?.close()
+            imageReader = null
+            mediaProjection?.stop()
+            mediaProjection = null
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error during projection cleanup", e)
         }
+        try {
+            if (::composeView.isInitialized && composeView.isAttachedToWindow) {
+                windowManager.removeView(composeView)
+            }
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error removing composeView", e)
+        }
+        mViewModelStore.clear()
     }
 
     private fun createNotificationChannel() {

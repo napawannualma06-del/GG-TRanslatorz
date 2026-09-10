@@ -62,25 +62,35 @@ jobs:
           name: GameTranslator-debug-apk
           path: release-artifacts/GameTranslator-debug.apk
 
+      - name: Determine Release Tag
+        id: tag_step
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG_NAME=v1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || inputs.version_name || 'v1.0.0' }}
-          name: Game Translator Release ${{ github.ref_name || inputs.version_name || 'v1.0.0' }}
+          tag_name: ${{ steps.tag_step.outputs.TAG_NAME }}
+          name: Game Translator Release ${{ steps.tag_step.outputs.TAG_NAME }}
           draft: false
           prerelease: false
+          make_latest: true
           files: release-artifacts/GameTranslator-debug.apk
           body: |
             ## 🎮 Game Translator - Android In-Game Overlay Translator
 
             ### 📦 Download & Installation
-            - Download `GameTranslator-debug.apk` below and install it on your Android device.
-            - Allow **Display over other apps** (SYSTEM_ALERT_WINDOW) permission when prompted.
-            - Allow **Screen capture / MediaProjection** permission when starting the floating service.
+            - ดาวน์โหลดไฟล์ `GameTranslator-debug.apk` ด้านล่างไปติดตั้งบนอุปกรณ์ Android
+            - อนุญาตสิทธิ์ **แสดงทับแอปอื่น (Display over other apps)**
+            - อนุญาตสิทธิ์ **บันทึกหน้าจอ (MediaProjection)** เพื่อให้ระบบสามารถอ่านข้อความในเกมได้
 
-            ### ✨ Features
-            - Floating overlay bubble for instant in-game text translation.
-            - OCR powered by on-device ML Kit.
-            - DeepSeek AI Translation with customizable game themes & pronouns.
-            - 100% OCR match caching to minimize token usage.
-            - In-app API Key configuration.
+            ### ✨ ฟีเจอร์ใหม่
+            - บับเบิลลอยสำหรับแปลข้อความในเกมแบบรวดเร็ว
+            - กดค้างที่บับเบิลเพื่อเลือกตีกรอบพื้นที่หน้าจอที่ต้องการแปลได้อย่างอิสระ
+            - ระบบตั้งเวลาให้กล่องข้อความแปลหายไปโดยอัตโนมัติ (เลือกเวลาได้ 3, 5, 7, 10, 15 วินาที หรือแตะเพื่อปิดเอง)
+            - ปรับปรุงประสิทธิภาพ ไม่เด้งหลุด และทำงานใน Background ได้อย่างเสถียร
+            - รองรับ DeepSeek AI และเลือกสรรพนาม/สไตล์การแปลได้ตามต้องการ
