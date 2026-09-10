@@ -12,14 +12,22 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.example.api.RetrofitClient
 import com.example.data.SettingsRepository
@@ -123,7 +131,8 @@ fun MainScreen(
     val coroutineScope = rememberCoroutineScope()
     
     var selectedModel by remember { mutableStateOf("deepseek-chat") }
-    var pronounTheme by remember { mutableStateOf("Neutral") }
+    var customPronounsInput by remember { mutableStateOf("ฉัน / เธอ") }
+    var overlayOpacity by remember { mutableStateOf(85) }
     var apiKeyInput by remember { mutableStateOf("") }
     var autoHideSeconds by remember { mutableStateOf(5) }
     
@@ -132,7 +141,8 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         selectedModel = settingsRepo.selectedModel.first()
-        pronounTheme = settingsRepo.pronounTheme.first()
+        customPronounsInput = settingsRepo.customPronouns.first()
+        overlayOpacity = settingsRepo.overlayOpacity.first()
         apiKeyInput = settingsRepo.apiKey.first()
         autoHideSeconds = settingsRepo.autoHideSeconds.first()
     }
@@ -217,26 +227,122 @@ fun MainScreen(
             Text(if (modelsLoading) "กำลังโหลดโมเดล..." else "อัปเดตโมเดลจาก API")
         }
 
-        // Pronoun Theme Dropdown
-        val themes = listOf("Neutral", "I/You", "Master/Servant", "Commander/Soldier", "Hero/Villain")
-        var themesDropdownExpanded by remember { mutableStateOf(false) }
-        Box {
-            OutlinedButton(onClick = { themesDropdownExpanded = true }) {
-                Text("ธีม/สรรพนาม: $pronounTheme")
-            }
-            DropdownMenu(
-                expanded = themesDropdownExpanded,
-                onDismissRequest = { themesDropdownExpanded = false }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+        // Custom Pronouns / Tone input (Freeform text field)
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("สรรพนาม / สไตล์ภาษาในการแปล", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = customPronounsInput,
+                onValueChange = {
+                    customPronounsInput = it
+                    coroutineScope.launch { settingsRepo.updateCustomPronouns(it) }
+                },
+                label = { Text("ระบุสรรพนามตามต้องการ") },
+                placeholder = { Text("เช่น ฉัน/เธอ, กู/มึง, ข้า/เอ็ง, นายท่าน/ข้า") },
+                supportingText = { Text("พิมพ์คู่สรรพนาม หรือสไตล์การพูดที่ต้องการให้แปลได้อิสระ") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            // Quick suggestion chips
+            val quickSuggestions = listOf("ฉัน / เธอ", "กู / มึง", "ข้า / เอ็ง", "ผม / คุณ", "นายท่าน / ข้า", "เป็นกันเอง/คำหยาบได้")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                themes.forEach { theme ->
-                    DropdownMenuItem(
-                        text = { Text(theme) },
+                quickSuggestions.forEach { suggestion ->
+                    SuggestionChip(
                         onClick = {
-                            pronounTheme = theme
-                            coroutineScope.launch { settingsRepo.updatePronounTheme(theme) }
-                            themesDropdownExpanded = false
-                        }
+                            customPronounsInput = suggestion
+                            coroutineScope.launch { settingsRepo.updateCustomPronouns(suggestion) }
+                        },
+                        label = { Text(suggestion) }
                     )
+                }
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+        // Overlay Opacity / Transparency Slider
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "ความทึบแสงกล่องแปล:",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "$overlayOpacity%",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Text(
+                "ปรับให้โปร่งแสงเพื่อให้อ่านข้อความแปลได้โดยไม่บังตัวเกมด้านหลัง",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Slider(
+                value = overlayOpacity.toFloat(),
+                onValueChange = {
+                    overlayOpacity = it.toInt()
+                    coroutineScope.launch { settingsRepo.updateOverlayOpacity(it.toInt()) }
+                },
+                valueRange = 20f..100f,
+                steps = 15,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Live Preview Container
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(68.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF0F172A)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("🎮 (จำลองภาพฉากหลังในเกม)", color = Color(0x55FFFFFF), fontSize = 12.sp)
+                Card(
+                    modifier = Modifier
+                        .padding(horizontal = 24.dp)
+                        .fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF18181B).copy(alpha = (overlayOpacity / 100f).coerceIn(0.15f, 1f))
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        Color.White.copy(alpha = ((overlayOpacity / 100f) * 0.35f).coerceAtLeast(0.12f))
+                    )
+                ) {
+                    Box(
+                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "ตัวอย่างกล่องแปลโปร่งใส ($overlayOpacity%)",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
         }

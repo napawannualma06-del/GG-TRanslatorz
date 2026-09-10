@@ -16,6 +16,8 @@ class SettingsRepository(private val context: Context) {
     companion object {
         val SELECTED_MODEL = stringPreferencesKey("selected_model")
         val PRONOUN_THEME = stringPreferencesKey("pronoun_theme")
+        val CUSTOM_PRONOUNS = stringPreferencesKey("custom_pronouns")
+        val OVERLAY_OPACITY = intPreferencesKey("overlay_opacity")
         val BOUNDING_BOX = stringPreferencesKey("bounding_box") // "x,y,w,h"
         val API_KEY = stringPreferencesKey("api_key")
         val AUTO_HIDE_SECONDS = intPreferencesKey("auto_hide_seconds")
@@ -24,7 +26,11 @@ class SettingsRepository(private val context: Context) {
     }
 
     val selectedModel: Flow<String> = context.dataStore.data.map { it[SELECTED_MODEL] ?: "deepseek-chat" }
-    val pronounTheme: Flow<String> = context.dataStore.data.map { it[PRONOUN_THEME] ?: "Neutral" }
+    val customPronouns: Flow<String> = context.dataStore.data.map { 
+        it[CUSTOM_PRONOUNS] ?: it[PRONOUN_THEME] ?: "ฉัน / เธอ" 
+    }
+    val pronounTheme: Flow<String> = customPronouns
+    val overlayOpacity: Flow<Int> = context.dataStore.data.map { it[OVERLAY_OPACITY] ?: 85 }
     val boundingBox: Flow<String> = context.dataStore.data.map { it[BOUNDING_BOX] ?: "0,0,100,100" } // percentages
     val apiKey: Flow<String> = context.dataStore.data.map { it[API_KEY] ?: "" }
     val autoHideSeconds: Flow<Int> = context.dataStore.data.map { it[AUTO_HIDE_SECONDS] ?: 5 }
@@ -39,8 +45,19 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[SELECTED_MODEL] = model }
     }
 
+    suspend fun updateCustomPronouns(pronouns: String) {
+        context.dataStore.edit { 
+            it[CUSTOM_PRONOUNS] = pronouns 
+            it[PRONOUN_THEME] = pronouns
+        }
+    }
+
     suspend fun updatePronounTheme(theme: String) {
-        context.dataStore.edit { it[PRONOUN_THEME] = theme }
+        updateCustomPronouns(theme)
+    }
+
+    suspend fun updateOverlayOpacity(opacity: Int) {
+        context.dataStore.edit { it[OVERLAY_OPACITY] = opacity.coerceIn(10, 100) }
     }
 
     suspend fun updateBoundingBox(box: String) {

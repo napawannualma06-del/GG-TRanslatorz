@@ -101,6 +101,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
     private var isTranslating by mutableStateOf(false)
     private var isSelectionMode by mutableStateOf(false)
     private var currentBoundingBox by mutableStateOf("0,0,100,100")
+    private var overlayOpacity by mutableStateOf(85)
 
     private var bubbleX = 30
     private var bubbleY = 300
@@ -118,6 +119,9 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
 
         lifecycleScope.launch {
             settingsRepo.boundingBox.collect { currentBoundingBox = it }
+        }
+        lifecycleScope.launch {
+            settingsRepo.overlayOpacity.collect { overlayOpacity = it }
         }
 
         createNotificationChannel()
@@ -234,6 +238,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
                     MovableTranslationOverlay(
                         translation = currentTranslation,
                         isTranslating = isTranslating,
+                        opacityPercent = overlayOpacity,
                         onClose = { hideTranslationView() },
                         onDrag = { dx, dy ->
                             textOverlayX += dx.toInt()
@@ -418,10 +423,16 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
             }
 
             val model = settingsRepo.selectedModel.first()
-            val pronoun = settingsRepo.pronounTheme.first()
-            val prompt = "Strictly output only the translated text in Thai. " +
-                    "No markdown, no conversational filler, no explanations. " +
-                    "Theme/Pronoun style: $pronoun."
+            val customPronouns = settingsRepo.customPronouns.first().trim()
+            val prompt = if (customPronouns.isNotEmpty()) {
+                "Strictly output only the translated text in Thai. " +
+                "No markdown, no conversational filler, no explanations. " +
+                "Dialogue pronouns / speaking style to use: $customPronouns."
+            } else {
+                "Strictly output only the translated text in Thai. " +
+                "No markdown, no conversational filler, no explanations. " +
+                "Translate dialogue naturally into Thai."
+            }
 
             val request = ChatRequest(
                 model = model,
@@ -727,10 +738,12 @@ fun BubbleUI(
 fun MovableTranslationOverlay(
     translation: String,
     isTranslating: Boolean,
+    opacityPercent: Int = 85,
     onClose: () -> Unit,
     onDrag: (Float, Float) -> Unit,
     onDragEnd: () -> Unit
 ) {
+    val alpha = (opacityPercent / 100f).coerceIn(0.15f, 1f)
     Card(
         modifier = Modifier
             .widthIn(min = 220.dp, max = 340.dp)
@@ -744,9 +757,9 @@ fun MovableTranslationOverlay(
             },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = Color(0xF218181B)
+            containerColor = Color(0xFF18181B).copy(alpha = alpha)
         ),
-        border = BorderStroke(1.dp, Color(0x33FFFFFF)),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = (alpha * 0.35f).coerceAtLeast(0.12f))),
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
     ) {
         Column(
