@@ -1,17 +1,5 @@
 package com.example
 
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Button
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
-import java.util.Locale
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -19,6 +7,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -28,73 +17,61 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import android.view.Gravity
-import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
-import androidx.lifecycle.Lifecycle
+import androidx.core.app.ServiceCompat
 import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.setViewTreeLifecycleOwner
-import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
-import com.example.api.ChatRequest
-import com.example.api.ChatMessage
-import com.example.api.RetrofitClient
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.example.api.*
 import com.example.data.SettingsRepository
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
-
-import android.os.Handler
-import android.os.Looper
-import android.content.pm.ServiceInfo
-import androidx.core.app.ServiceCompat
-import androidx.lifecycle.ViewModelStore
-import androidx.lifecycle.ViewModelStoreOwner
-import androidx.lifecycle.setViewTreeViewModelStoreOwner
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import java.util.Locale
 
 class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelStoreOwner {
 
@@ -102,31 +79,35 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
     override val viewModelStore: ViewModelStore get() = mViewModelStore
 
     private lateinit var windowManager: WindowManager
-    private lateinit var composeView: ComposeView
-    private lateinit var params: WindowManager.LayoutParams
+    private lateinit var bubbleComposeView: ComposeView
+    private lateinit var bubbleParams: WindowManager.LayoutParams
+
+    private lateinit var textOverlayComposeView: ComposeView
+    private lateinit var textOverlayParams: WindowManager.LayoutParams
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-    
+
     private lateinit var settingsRepo: SettingsRepository
     private var lastExtractedText: String? = null
     private var cachedTranslation: String? = null
     private var autoHideJob: Job? = null
+    private var translationJob: Job? = null
 
     // Compose states
-    private var showTranslation by mutableStateOf(false)
     private var currentTranslation by mutableStateOf("")
     private var isTranslating by mutableStateOf(false)
-    
-    private var bubbleX = 0
-    private var bubbleY = 100
     private var isSelectionMode by mutableStateOf(false)
     private var currentBoundingBox by mutableStateOf("0,0,100,100")
 
-    private val savedStateRegistryController = SavedStateRegistryController.create(this)
+    private var bubbleX = 30
+    private var bubbleY = 300
+    private var textOverlayX = 40
+    private var textOverlayY = 600
 
+    private val savedStateRegistryController = SavedStateRegistryController.create(this)
     override val savedStateRegistry: SavedStateRegistry
         get() = savedStateRegistryController.savedStateRegistry
 
@@ -134,7 +115,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
         super.onCreate()
         savedStateRegistryController.performRestore(null)
         settingsRepo = SettingsRepository(this)
-        
+
         lifecycleScope.launch {
             settingsRepo.boundingBox.collect { currentBoundingBox = it }
         }
@@ -155,35 +136,59 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
             Log.e("FloatingService", "Error calling startForeground", e)
             startForeground(1, buildNotification())
         }
-        
-        setupFloatingView()
+
+        setupFloatingViews()
     }
 
-    private fun setupFloatingView() {
+    private fun setupFloatingViews() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        params = WindowManager.LayoutParams(
+        val displayMetrics = resources.displayMetrics
+        val screenW = displayMetrics.widthPixels
+        val screenH = displayMetrics.heightPixels
+        bubbleX = 30
+        bubbleY = (screenH * 0.35f).toInt()
+        textOverlayX = (screenW * 0.06f).toInt()
+        textOverlayY = (screenH * 0.65f).toInt()
+
+        // 1. Bubble Params
+        bubbleParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            type,
+            overlayType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.TOP or Gravity.START
-        params.x = bubbleX
-        params.y = bubbleY
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = bubbleX
+            y = bubbleY
+        }
 
-        composeView = ComposeView(this).apply {
+        // 2. Text Overlay Params (starts hidden)
+        textOverlayParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = textOverlayX
+            y = textOverlayY
+        }
+
+        // Initialize Bubble ComposeView
+        bubbleComposeView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@FloatingService)
             setViewTreeSavedStateRegistryOwner(this@FloatingService)
             setViewTreeViewModelStoreOwner(this@FloatingService)
-            
+
             setContent {
                 MaterialTheme {
                     if (isSelectionMode) {
@@ -196,21 +201,19 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
                             onCancel = { enableSelectionMode(false) }
                         )
                     } else {
-                        FloatingUI(
-                            showTranslation = showTranslation,
-                            translation = currentTranslation,
+                        BubbleUI(
                             isTranslating = isTranslating,
-                            onTap = { handleTap() },
+                            onTap = { handleBubbleTap() },
                             onLongPress = { enableSelectionMode(true) },
                             onDrag = { dx, dy ->
                                 bubbleX += dx.toInt()
                                 bubbleY += dy.toInt()
-                                params.x = bubbleX
-                                params.y = bubbleY
+                                bubbleParams.x = bubbleX
+                                bubbleParams.y = bubbleY
                                 try {
-                                    windowManager.updateViewLayout(composeView, params)
+                                    windowManager.updateViewLayout(bubbleComposeView, bubbleParams)
                                 } catch (e: Exception) {
-                                    Log.e("FloatingService", "Error updating layout on drag", e)
+                                    Log.e("FloatingService", "Error updating bubble layout", e)
                                 }
                             }
                         )
@@ -219,113 +222,292 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
             }
         }
 
+        // Initialize Movable Text Overlay ComposeView
+        textOverlayComposeView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@FloatingService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingService)
+            setViewTreeViewModelStoreOwner(this@FloatingService)
+            visibility = View.GONE
+
+            setContent {
+                MaterialTheme {
+                    MovableTranslationOverlay(
+                        translation = currentTranslation,
+                        isTranslating = isTranslating,
+                        onClose = { hideTranslationView() },
+                        onDrag = { dx, dy ->
+                            textOverlayX += dx.toInt()
+                            textOverlayY += dy.toInt()
+                            textOverlayParams.x = textOverlayX
+                            textOverlayParams.y = textOverlayY
+                            try {
+                                windowManager.updateViewLayout(textOverlayComposeView, textOverlayParams)
+                            } catch (e: Exception) {
+                                Log.e("FloatingService", "Error moving text overlay", e)
+                            }
+                        },
+                        onDragEnd = {
+                            lifecycleScope.launch {
+                                settingsRepo.updateTextPos(textOverlayX, textOverlayY)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
         try {
-            windowManager.addView(composeView, params)
+            windowManager.addView(bubbleComposeView, bubbleParams)
         } catch (e: Exception) {
-            Log.e("FloatingService", "Error adding composeView to windowManager", e)
+            Log.e("FloatingService", "Error adding bubbleComposeView", e)
+        }
+
+        try {
+            windowManager.addView(textOverlayComposeView, textOverlayParams)
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error adding textOverlayComposeView", e)
+        }
+
+        // Load saved text overlay position
+        lifecycleScope.launch {
+            val savedX = settingsRepo.textPosX.first()
+            val savedY = settingsRepo.textPosY.first()
+            if (savedX >= 0) textOverlayX = savedX.coerceIn(0, (screenW - 100).coerceAtLeast(0))
+            if (savedY >= 0) textOverlayY = savedY.coerceIn(0, (screenH - 100).coerceAtLeast(0))
+            textOverlayParams.x = textOverlayX
+            textOverlayParams.y = textOverlayY
+            if (::textOverlayComposeView.isInitialized && textOverlayComposeView.isAttachedToWindow) {
+                try {
+                    windowManager.updateViewLayout(textOverlayComposeView, textOverlayParams)
+                } catch (e: Exception) {
+                    Log.e("FloatingService", "Error updating initial overlay position", e)
+                }
+            }
         }
     }
 
     private fun enableSelectionMode(enabled: Boolean) {
         isSelectionMode = enabled
         if (enabled) {
-            params.width = WindowManager.LayoutParams.MATCH_PARENT
-            params.height = WindowManager.LayoutParams.MATCH_PARENT
-            params.x = 0
-            params.y = 0
+            hideTranslationView()
+            bubbleParams.width = WindowManager.LayoutParams.MATCH_PARENT
+            bubbleParams.height = WindowManager.LayoutParams.MATCH_PARENT
+            bubbleParams.x = 0
+            bubbleParams.y = 0
         } else {
-            params.width = WindowManager.LayoutParams.WRAP_CONTENT
-            params.height = WindowManager.LayoutParams.WRAP_CONTENT
-            params.x = bubbleX
-            params.y = bubbleY
+            bubbleParams.width = WindowManager.LayoutParams.WRAP_CONTENT
+            bubbleParams.height = WindowManager.LayoutParams.WRAP_CONTENT
+            bubbleParams.x = bubbleX
+            bubbleParams.y = bubbleY
         }
         try {
-            windowManager.updateViewLayout(composeView, params)
+            windowManager.updateViewLayout(bubbleComposeView, bubbleParams)
         } catch (e: Exception) {
             Log.e("FloatingService", "Error updating selection mode layout", e)
         }
     }
 
-    private fun handleTap() {
+    private fun showTranslationView() {
+        if (!::textOverlayComposeView.isInitialized) return
+        textOverlayComposeView.visibility = View.VISIBLE
+        textOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        try {
+            windowManager.updateViewLayout(textOverlayComposeView, textOverlayParams)
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error showing text overlay", e)
+        }
+    }
+
+    private fun hideTranslationView() {
+        if (!::textOverlayComposeView.isInitialized) return
         autoHideJob?.cancel()
-        if (showTranslation) {
-            // Hide translation manually
-            showTranslation = false
-        } else {
-            // Trigger capture
-            isTranslating = true
-            lifecycleScope.launch {
-                try {
-                    captureAndTranslate()
-                } catch (e: Throwable) {
-                    Log.e("FloatingService", "Error in captureAndTranslate launch", e)
-                    withContext(Dispatchers.Main) {
-                        resetState("เกิดข้อผิดพลาด: ${e.localizedMessage ?: "ไม่ทราบสาเหตุ"}")
-                    }
+        translationJob?.cancel()
+        isTranslating = false
+        textOverlayComposeView.visibility = View.GONE
+        textOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        try {
+            windowManager.updateViewLayout(textOverlayComposeView, textOverlayParams)
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error hiding text overlay", e)
+        }
+    }
+
+    private fun handleBubbleTap() {
+        autoHideJob?.cancel()
+        translationJob?.cancel()
+
+        translationJob = lifecycleScope.launch {
+            try {
+                captureAndStreamTranslate()
+            } catch (e: Throwable) {
+                Log.e("FloatingService", "Error in captureAndStreamTranslate launch", e)
+                withContext(Dispatchers.Main) {
+                    resetState("เกิดข้อผิดพลาด: ${e.localizedMessage ?: "ไม่ทราบสาเหตุ"}")
                 }
             }
         }
     }
 
-    private suspend fun captureAndTranslate() {
+    private suspend fun captureAndStreamTranslate() {
         withContext(Dispatchers.IO) {
-            try {
-                // Short delay to allow button state to update
-                delay(200)
+            withContext(Dispatchers.Main) {
+                isTranslating = true
+                currentTranslation = "กำลังจับภาพหน้าจอ..."
+                showTranslationView()
+            }
 
-                val bitmap = captureScreen()
-                if (bitmap == null) {
-                    withContext(Dispatchers.Main) {
-                        resetState("ไม่สามารถจับภาพหน้าจอได้ (กรุณาเปิดบริการใหม่)")
-                    }
-                    return@withContext
-                }
-                
-                // Bounding box cropping
-                val boxStr = settingsRepo.boundingBox.first()
-                val parts = boxStr.split(",").mapNotNull { it.toFloatOrNull() }
-                val croppedBitmap = if (parts.size == 4) {
-                    val (px, py, pw, ph) = parts
-                    val bx = (px / 100f * bitmap.width).toInt().coerceIn(0, (bitmap.width - 1).coerceAtLeast(0))
-                    val by = (py / 100f * bitmap.height).toInt().coerceIn(0, (bitmap.height - 1).coerceAtLeast(0))
-                    val bw = (pw / 100f * bitmap.width).toInt().coerceIn(1, (bitmap.width - bx).coerceAtLeast(1))
-                    val bh = (ph / 100f * bitmap.height).toInt().coerceIn(1, (bitmap.height - by).coerceAtLeast(1))
-                    try {
-                        Bitmap.createBitmap(bitmap, bx, by, bw, bh)
-                    } catch (e: Exception) {
-                        bitmap
-                    }
-                } else bitmap
+            delay(150)
 
-                val image = InputImage.fromBitmap(croppedBitmap, 0)
-                
-                val result = com.google.android.gms.tasks.Tasks.await(textRecognizer.process(image))
-                val text = result.text.trim()
-                if (text.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        resetState("ไม่พบข้อความในพื้นที่ที่กำหนด")
-                    }
-                    return@withContext
-                }
-
-                if (text == lastExtractedText && cachedTranslation != null) {
-                    withContext(Dispatchers.Main) {
-                        showResult(cachedTranslation!!)
-                    }
-                    return@withContext
-                }
-
-                lastExtractedText = text
-                val translation = performTranslation(text)
-                cachedTranslation = translation
+            val bitmap = captureScreen()
+            if (bitmap == null) {
                 withContext(Dispatchers.Main) {
-                    showResult(translation)
+                    resetState("ไม่สามารถจับภาพหน้าจอได้ (กรุณาเปิดบริการใหม่)")
                 }
+                return@withContext
+            }
 
+            withContext(Dispatchers.Main) {
+                currentTranslation = "กำลังอ่านข้อความ..."
+            }
+
+            // Bounding box cropping
+            val boxStr = settingsRepo.boundingBox.first()
+            val parts = boxStr.split(",").mapNotNull { it.toFloatOrNull() }
+            val croppedBitmap = if (parts.size == 4) {
+                val (px, py, pw, ph) = parts
+                val bx = (px / 100f * bitmap.width).toInt().coerceIn(0, (bitmap.width - 1).coerceAtLeast(0))
+                val by = (py / 100f * bitmap.height).toInt().coerceIn(0, (bitmap.height - 1).coerceAtLeast(0))
+                val bw = (pw / 100f * bitmap.width).toInt().coerceIn(1, (bitmap.width - bx).coerceAtLeast(1))
+                val bh = (ph / 100f * bitmap.height).toInt().coerceIn(1, (bitmap.height - by).coerceAtLeast(1))
+                try {
+                    Bitmap.createBitmap(bitmap, bx, by, bw, bh)
+                } catch (e: Exception) {
+                    bitmap
+                }
+            } else bitmap
+
+            val image = InputImage.fromBitmap(croppedBitmap, 0)
+            val result = com.google.android.gms.tasks.Tasks.await(textRecognizer.process(image))
+            val text = result.text.trim()
+            if (text.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    resetState("ไม่พบข้อความในพื้นที่ที่กำหนด")
+                }
+                return@withContext
+            }
+
+            // Cache check
+            if (text == lastExtractedText && cachedTranslation != null) {
+                withContext(Dispatchers.Main) {
+                    currentTranslation = cachedTranslation!!
+                    isTranslating = false
+                    scheduleAutoHide()
+                }
+                return@withContext
+            }
+
+            lastExtractedText = text
+
+            val userKey = settingsRepo.apiKey.first()
+            val apiKey = userKey.trim().ifEmpty { BuildConfig.DEEPSEEK_API_KEY }
+            if (apiKey.isNullOrEmpty()) {
+                withContext(Dispatchers.Main) {
+                    resetState("กรุณาใส่ API Key ในหน้าตั้งค่าแอป")
+                }
+                return@withContext
+            }
+
+            val model = settingsRepo.selectedModel.first()
+            val pronoun = settingsRepo.pronounTheme.first()
+            val prompt = "Strictly output only the translated text in Thai. " +
+                    "No markdown, no conversational filler, no explanations. " +
+                    "Theme/Pronoun style: $pronoun."
+
+            val request = ChatRequest(
+                model = model,
+                messages = listOf(
+                    ChatMessage("system", prompt),
+                    ChatMessage("user", text)
+                ),
+                stream = true
+            )
+
+            withContext(Dispatchers.Main) {
+                currentTranslation = "กำลังแปล..."
+            }
+
+            val response = try {
+                RetrofitClient.api.streamTranslateText("Bearer $apiKey", request)
             } catch (e: Exception) {
-                Log.e("FloatingService", "Error during translation", e)
+                Log.e("FloatingService", "Network error calling stream API", e)
                 withContext(Dispatchers.Main) {
-                    resetState("ข้อผิดพลาด: ${e.message}")
+                    resetState("ข้อผิดพลาดเครือข่าย: ${e.message}")
+                }
+                return@withContext
+            }
+
+            if (!response.isSuccessful) {
+                val errorBody = response.errorBody()?.string() ?: "HTTP ${response.code()}"
+                Log.e("FloatingService", "API error: ${response.code()} $errorBody")
+                withContext(Dispatchers.Main) {
+                    resetState("ข้อผิดพลาด API (${response.code()}): $errorBody")
+                }
+                return@withContext
+            }
+
+            val responseBody = response.body()
+            if (responseBody == null) {
+                withContext(Dispatchers.Main) {
+                    resetState("ไม่มีข้อมูลตอบกลับจากเซิร์ฟเวอร์")
+                }
+                return@withContext
+            }
+
+            val source = responseBody.source()
+            val streamAdapter = RetrofitClient.moshi.adapter(StreamChunk::class.java)
+            val sb = StringBuilder()
+            var receivedTokens = false
+
+            try {
+                while (!source.exhausted()) {
+                    val line = source.readUtf8Line() ?: break
+                    if (line.startsWith("data: ")) {
+                        val data = line.substring(6).trim()
+                        if (data == "[DONE]") {
+                            break
+                        }
+                        try {
+                            val chunk = streamAdapter.fromJson(data)
+                            val deltaContent = chunk?.choices?.firstOrNull()?.delta?.content
+                            if (!deltaContent.isNullOrEmpty()) {
+                                sb.append(deltaContent)
+                                val currentText = sb.toString()
+                                withContext(Dispatchers.Main) {
+                                    currentTranslation = currentText
+                                    isTranslating = false
+                                }
+                                receivedTokens = true
+                            }
+                        } catch (e: Exception) {
+                            // ignore malformed SSE json or comment lines
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("FloatingService", "Error reading stream", e)
+            }
+
+            val finalText = sb.toString().trim()
+            if (finalText.isNotEmpty()) {
+                cachedTranslation = finalText
+                withContext(Dispatchers.Main) {
+                    currentTranslation = finalText
+                    isTranslating = false
+                    scheduleAutoHide()
+                }
+            } else if (!receivedTokens) {
+                withContext(Dispatchers.Main) {
+                    resetState("ไม่มีข้อความแปล")
                 }
             }
         }
@@ -334,14 +516,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
     private fun resetState(msg: String) {
         isTranslating = false
         currentTranslation = msg
-        showTranslation = true
-        scheduleAutoHide()
-    }
-
-    private fun showResult(translation: String) {
-        isTranslating = false
-        currentTranslation = translation
-        showTranslation = true
+        showTranslationView()
         scheduleAutoHide()
     }
 
@@ -353,44 +528,11 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
                 if (seconds > 0) {
                     delay(seconds * 1000L)
                     withContext(Dispatchers.Main) {
-                        showTranslation = false
+                        hideTranslationView()
                     }
                 }
             } catch (e: Exception) {
                 Log.e("FloatingService", "Error in autoHideJob", e)
-            }
-        }
-    }
-
-    private suspend fun performTranslation(text: String): String {
-        return withContext(Dispatchers.IO) {
-            try {
-                val userKey = settingsRepo.apiKey.first()
-                val apiKey = userKey.trim().ifEmpty { BuildConfig.DEEPSEEK_API_KEY }
-                if (apiKey.isNullOrEmpty()) return@withContext "กรุณาใส่ API Key ในหน้าตั้งค่าแอป"
-
-                val model = settingsRepo.selectedModel.first()
-                val pronoun = settingsRepo.pronounTheme.first()
-
-                val systemPrompt = """
-                    Strictly output only the translated text in Thai. 
-                    No markdown, no conversational filler, no explanations. 
-                    Context/Pronouns: $pronoun.
-                """.trimIndent()
-
-                val request = ChatRequest(
-                    model = model,
-                    messages = listOf(
-                        ChatMessage("system", systemPrompt),
-                        ChatMessage("user", text)
-                    )
-                )
-
-                val response = RetrofitClient.api.translateText("Bearer $apiKey", request)
-                response.choices.firstOrNull()?.message?.content?.trim() ?: "ไม่มีข้อความแปล"
-            } catch (e: Exception) {
-                Log.e("FloatingService", "API Error", e)
-                "ข้อผิดพลาด API: ${e.message}"
             }
         }
     }
@@ -417,7 +559,6 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
                 )
             }
 
-            // Retry acquiring image up to 6 times to let VirtualDisplay produce frames
             var image: Image? = null
             for (i in 0 until 6) {
                 image = imageReader?.acquireLatestImage()
@@ -439,7 +580,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
 
                 val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
                 bitmap.copyPixelsFromBuffer(buffer)
-                
+
                 if (rowPadding == 0) bitmap else Bitmap.createBitmap(bitmap, 0, 0, width, height)
             }
         } catch (e: Exception) {
@@ -450,7 +591,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        
+
         val resultCode = intent?.getIntExtra("RESULT_CODE", 0) ?: 0
         val data: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent?.getParcelableExtra("DATA", Intent::class.java)
@@ -458,7 +599,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
             @Suppress("DEPRECATION")
             intent?.getParcelableExtra("DATA")
         }
-        
+
         if (resultCode != 0 && data != null) {
             try {
                 val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -489,6 +630,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
     override fun onDestroy() {
         super.onDestroy()
         autoHideJob?.cancel()
+        translationJob?.cancel()
         try {
             virtualDisplay?.release()
             virtualDisplay = null
@@ -500,11 +642,18 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
             Log.e("FloatingService", "Error during projection cleanup", e)
         }
         try {
-            if (::composeView.isInitialized && composeView.isAttachedToWindow) {
-                windowManager.removeView(composeView)
+            if (::bubbleComposeView.isInitialized && bubbleComposeView.isAttachedToWindow) {
+                windowManager.removeView(bubbleComposeView)
             }
         } catch (e: Exception) {
-            Log.e("FloatingService", "Error removing composeView", e)
+            Log.e("FloatingService", "Error removing bubbleComposeView", e)
+        }
+        try {
+            if (::textOverlayComposeView.isInitialized && textOverlayComposeView.isAttachedToWindow) {
+                windowManager.removeView(textOverlayComposeView)
+            }
+        } catch (e: Exception) {
+            Log.e("FloatingService", "Error removing textOverlayComposeView", e)
         }
         mViewModelStore.clear()
     }
@@ -531,9 +680,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
 }
 
 @Composable
-fun FloatingUI(
-    showTranslation: Boolean,
-    translation: String,
+fun BubbleUI(
     isTranslating: Boolean,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
@@ -553,29 +700,113 @@ fun FloatingUI(
                     onLongPress = { onLongPress() }
                 )
             }
-            .clip(if (showTranslation) RoundedCornerShape(8.dp) else CircleShape)
-            .background(Color.Black.copy(alpha = 0.7f))
-            .padding(if (showTranslation) 16.dp else 12.dp)
+            .size(54.dp)
+            .clip(CircleShape)
+            .background(Color(0xE6111827))
+            .border(2.dp, Color(0x66FFFFFF), CircleShape),
+        contentAlignment = Alignment.Center
     ) {
-        if (showTranslation) {
-            Text(
-                text = translation,
-                color = Color.White,
-                fontSize = 16.sp
-            )
-        } else if (isTranslating) {
-            Text(
-                text = "...",
-                color = Color.White,
-                fontSize = 16.sp
+        if (isTranslating) {
+            CircularProgressIndicator(
+                color = Color(0xFF60A5FA),
+                strokeWidth = 2.5.dp,
+                modifier = Modifier.size(24.dp)
             )
         } else {
             Icon(
                 imageVector = Icons.Default.Translate,
-                contentDescription = "Translate",
+                contentDescription = "แปลภาษา",
                 tint = Color.White,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(26.dp)
             )
+        }
+    }
+}
+
+@Composable
+fun MovableTranslationOverlay(
+    translation: String,
+    isTranslating: Boolean,
+    onClose: () -> Unit,
+    onDrag: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .widthIn(min = 220.dp, max = 340.dp)
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragEnd = { onDragEnd() }
+                ) { change, dragAmount ->
+                    change.consume()
+                    onDrag(dragAmount.x, dragAmount.y)
+                }
+            },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xF218181B)
+        ),
+        border = BorderStroke(1.dp, Color(0x33FFFFFF)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            // Header Row: Drag handle + Status + Close button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DragHandle,
+                        contentDescription = "ลากเพื่อย้าย",
+                        tint = Color(0x99FFFFFF),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isTranslating) "กำลังแปล (สตรีมมิ่ง)..." else "คำแปล (ลากเพื่อย้าย)",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (isTranslating) Color(0xFF93C5FD) else Color(0xCCFFFFFF),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "ปิด",
+                        tint = Color(0xCCFFFFFF),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Body text with vertical scroll for long messages
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 240.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = translation,
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    lineHeight = 22.sp,
+                    fontWeight = FontWeight.Normal
+                )
+            }
         }
     }
 }
@@ -595,7 +826,6 @@ fun SelectionOverlay(
         val screenW = constraints.maxWidth.toFloat()
         val screenH = constraints.maxHeight.toFloat()
 
-        // Parse initial box string
         val parts = initialBox.split(",").mapNotNull { it.toFloatOrNull() }
         val initX = if (parts.size == 4) parts[0] / 100f * screenW else 0f
         val initY = if (parts.size == 4) parts[1] / 100f * screenH else 0f
@@ -607,7 +837,6 @@ fun SelectionOverlay(
         var width by remember { mutableStateOf(initW) }
         var height by remember { mutableStateOf(initH) }
 
-        // The bounding box
         Box(
             modifier = Modifier
                 .offset { IntOffset(offsetX.toInt(), offsetY.toInt()) }
@@ -662,7 +891,6 @@ fun SelectionOverlay(
             )
         }
 
-        // Action Buttons
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)

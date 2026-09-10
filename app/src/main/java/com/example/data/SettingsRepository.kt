@@ -19,6 +19,8 @@ class SettingsRepository(private val context: Context) {
         val BOUNDING_BOX = stringPreferencesKey("bounding_box") // "x,y,w,h"
         val API_KEY = stringPreferencesKey("api_key")
         val AUTO_HIDE_SECONDS = intPreferencesKey("auto_hide_seconds")
+        val TEXT_POS_X = intPreferencesKey("text_pos_x")
+        val TEXT_POS_Y = intPreferencesKey("text_pos_y")
     }
 
     val selectedModel: Flow<String> = context.dataStore.data.map { it[SELECTED_MODEL] ?: "deepseek-chat" }
@@ -26,6 +28,8 @@ class SettingsRepository(private val context: Context) {
     val boundingBox: Flow<String> = context.dataStore.data.map { it[BOUNDING_BOX] ?: "0,0,100,100" } // percentages
     val apiKey: Flow<String> = context.dataStore.data.map { it[API_KEY] ?: "" }
     val autoHideSeconds: Flow<Int> = context.dataStore.data.map { it[AUTO_HIDE_SECONDS] ?: 5 }
+    val textPosX: Flow<Int> = context.dataStore.data.map { it[TEXT_POS_X] ?: -1 }
+    val textPosY: Flow<Int> = context.dataStore.data.map { it[TEXT_POS_Y] ?: -1 }
 
     suspend fun updateApiKey(key: String) {
         context.dataStore.edit { it[API_KEY] = key }
@@ -45,5 +49,12 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun updateAutoHideSeconds(seconds: Int) {
         context.dataStore.edit { it[AUTO_HIDE_SECONDS] = seconds }
+    }
+
+    suspend fun updateTextPos(x: Int, y: Int) {
+        context.dataStore.edit {
+            it[TEXT_POS_X] = x
+            it[TEXT_POS_Y] = y
+        }
     }
 }
