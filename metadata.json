@@ -1,0 +1,6 @@
+{
+  "name": "Game Translator",
+  "description": "An on-screen floating text translator for games.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
