@@ -102,6 +102,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
     private var isSelectionMode by mutableStateOf(false)
     private var currentBoundingBox by mutableStateOf("0,0,100,100")
     private var overlayOpacity by mutableStateOf(85)
+    private var activeModelName by mutableStateOf("deepseek-v4-flash")
 
     private var bubbleX = 30
     private var bubbleY = 300
@@ -122,6 +123,9 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
         }
         lifecycleScope.launch {
             settingsRepo.overlayOpacity.collect { overlayOpacity = it }
+        }
+        lifecycleScope.launch {
+            settingsRepo.selectedModel.collect { activeModelName = it }
         }
 
         createNotificationChannel()
@@ -239,6 +243,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
                         translation = currentTranslation,
                         isTranslating = isTranslating,
                         opacityPercent = overlayOpacity,
+                        modelName = activeModelName,
                         onClose = { hideTranslationView() },
                         onDrag = { dx, dy ->
                             textOverlayX += dx.toInt()
@@ -442,6 +447,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
                 ),
                 stream = true
             )
+            Log.i("FloatingService", "Sending translation request with model: '$model'")
 
             withContext(Dispatchers.Main) {
                 currentTranslation = "กำลังแปล..."
@@ -739,6 +745,7 @@ fun MovableTranslationOverlay(
     translation: String,
     isTranslating: Boolean,
     opacityPercent: Int = 85,
+    modelName: String = "deepseek-v4-flash",
     onClose: () -> Unit,
     onDrag: (Float, Float) -> Unit,
     onDragEnd: () -> Unit
@@ -765,7 +772,7 @@ fun MovableTranslationOverlay(
         Column(
             modifier = Modifier.padding(12.dp)
         ) {
-            // Header Row: Drag handle + Status + Close button
+            // Header Row: Drag handle + Status + Model Badge + Close button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -783,11 +790,25 @@ fun MovableTranslationOverlay(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (isTranslating) "กำลังแปล (สตรีมมิ่ง)..." else "คำแปล (ลากเพื่อย้าย)",
+                        text = if (isTranslating) "แปล..." else "คำแปล",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (isTranslating) Color(0xFF93C5FD) else Color(0xCCFFFFFF),
                         fontWeight = FontWeight.Medium
                     )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color(0x333B82F6),
+                        border = BorderStroke(0.5.dp, Color(0x6660A5FA))
+                    ) {
+                        Text(
+                            text = modelName,
+                            fontSize = 10.sp,
+                            color = Color(0xFF93C5FD),
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
 
                 IconButton(

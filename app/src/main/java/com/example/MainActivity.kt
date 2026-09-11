@@ -130,7 +130,7 @@ fun MainScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
     
-    var selectedModel by remember { mutableStateOf("deepseek-flash") }
+    var selectedModel by remember { mutableStateOf("deepseek-v4-flash") }
     var customPronounsInput by remember { mutableStateOf("ฉัน / เธอ") }
     var overlayOpacity by remember { mutableStateOf(85) }
     var apiKeyInput by remember { mutableStateOf("") }
@@ -138,8 +138,8 @@ fun MainScreen(
     
     val defaultModels = remember {
         listOf(
-            "deepseek-flash",
             "deepseek-v4-flash",
+            "deepseek-flash",
             "deepseek-chat",
             "deepseek-v4-pro",
             "deepseek-reasoner"
@@ -203,7 +203,7 @@ fun MainScreen(
         ) {
             Text("โมเดล DeepSeek", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(
-                "แนะนำ: deepseek-flash (V4 Flash) ประหยัดโทเค็นมากที่สุดและตอบสนองเร็วพิเศษ",
+                "แนะนำ: deepseek-v4-flash (V4 Flash) ประหยัดโทเค็นมากที่สุดและตอบสนองเร็วพิเศษ",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

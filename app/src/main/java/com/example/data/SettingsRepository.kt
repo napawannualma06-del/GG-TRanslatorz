@@ -25,7 +25,7 @@ class SettingsRepository(private val context: Context) {
         val TEXT_POS_Y = intPreferencesKey("text_pos_y")
     }
 
-    val selectedModel: Flow<String> = context.dataStore.data.map { it[SELECTED_MODEL] ?: "deepseek-flash" }
+    val selectedModel: Flow<String> = context.dataStore.data.map { it[SELECTED_MODEL] ?: "deepseek-v4-flash" }
     val customPronouns: Flow<String> = context.dataStore.data.map { 
         it[CUSTOM_PRONOUNS] ?: it[PRONOUN_THEME] ?: "ฉัน / เธอ" 
     }
