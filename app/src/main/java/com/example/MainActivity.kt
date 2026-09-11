@@ -130,13 +130,22 @@ fun MainScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
     
-    var selectedModel by remember { mutableStateOf("deepseek-chat") }
+    var selectedModel by remember { mutableStateOf("deepseek-flash") }
     var customPronounsInput by remember { mutableStateOf("ฉัน / เธอ") }
     var overlayOpacity by remember { mutableStateOf(85) }
     var apiKeyInput by remember { mutableStateOf("") }
     var autoHideSeconds by remember { mutableStateOf(5) }
     
-    var availableModels by remember { mutableStateOf(listOf("deepseek-chat")) }
+    val defaultModels = remember {
+        listOf(
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-chat",
+            "deepseek-v4-pro",
+            "deepseek-reasoner"
+        )
+    }
+    var availableModels by remember { mutableStateOf(defaultModels) }
     var modelsLoading by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -188,43 +197,78 @@ fun MainScreen(
         )
 
         // Models
-        var modelsDropdownExpanded by remember { mutableStateOf(false) }
-        Box {
-            OutlinedButton(onClick = { modelsDropdownExpanded = true }) {
-                Text("โมเดล: $selectedModel")
-            }
-            DropdownMenu(
-                expanded = modelsDropdownExpanded,
-                onDismissRequest = { modelsDropdownExpanded = false }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("โมเดล DeepSeek", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "แนะนำ: deepseek-flash (V4 Flash) ประหยัดโทเค็นมากที่สุดและตอบสนองเร็วพิเศษ",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedTextField(
+                value = selectedModel,
+                onValueChange = {
+                    selectedModel = it
+                    coroutineScope.launch { settingsRepo.updateModel(it) }
+                },
+                label = { Text("ชื่อโมเดลที่ใช้งาน") },
+                placeholder = { Text("เช่น deepseek-flash, deepseek-chat") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            // Quick Chips for popular models
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 availableModels.forEach { model ->
-                    DropdownMenuItem(
-                        text = { Text(model) },
+                    val isFlash = model.contains("flash", ignoreCase = true)
+                    SuggestionChip(
                         onClick = {
                             selectedModel = model
                             coroutineScope.launch { settingsRepo.updateModel(model) }
-                            modelsDropdownExpanded = false
-                        }
+                        },
+                        label = {
+                            Text(
+                                if (isFlash) "⚡ $model (ประหยัด)" else model,
+                                fontWeight = if (selectedModel == model) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        border = if (selectedModel == model) {
+                            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                        } else null
                     )
                 }
             }
-        }
-        
-        Button(onClick = {
-            coroutineScope.launch {
-                modelsLoading = true
-                try {
-                    val keyToUse = apiKeyInput.trim().ifEmpty { BuildConfig.DEEPSEEK_API_KEY }
-                    val response = RetrofitClient.api.getModels("Bearer $keyToUse")
-                    availableModels = response.data.map { it.id }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                } finally {
-                    modelsLoading = false
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                OutlinedButton(onClick = {
+                    coroutineScope.launch {
+                        modelsLoading = true
+                        try {
+                            val keyToUse = apiKeyInput.trim().ifEmpty { BuildConfig.DEEPSEEK_API_KEY }
+                            val response = RetrofitClient.api.getModels("Bearer $keyToUse")
+                            val apiModels = response.data.map { it.id }
+                            availableModels = (defaultModels + apiModels).distinct()
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        } finally {
+                            modelsLoading = false
+                        }
+                    }
+                }, enabled = !modelsLoading) {
+                    Text(if (modelsLoading) "กำลังโหลด..." else "🔄 ซิงค์รายการโมเดลจาก API")
                 }
             }
-        }, enabled = !modelsLoading) {
-            Text(if (modelsLoading) "กำลังโหลดโมเดล..." else "อัปเดตโมเดลจาก API")
         }
 
         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
