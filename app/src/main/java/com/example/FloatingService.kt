@@ -27,6 +27,7 @@ import android.view.WindowManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -35,9 +36,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Translate
+import com.example.api.GoogleTranslateHelper
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -103,6 +106,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
     private var currentBoundingBox by mutableStateOf("0,0,100,100")
     private var overlayOpacity by mutableStateOf(85)
     private var activeModelName by mutableStateOf("deepseek-v4-flash")
+    private var activeEngine by mutableStateOf("deepseek") // "deepseek" or "google"
 
     private var bubbleX = 30
     private var bubbleY = 300
@@ -112,6 +116,15 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
     override val savedStateRegistry: SavedStateRegistry
         get() = savedStateRegistryController.savedStateRegistry
+
+    private fun toggleTranslationEngine() {
+        val nextEngine = if (activeEngine == "google") "deepseek" else "google"
+        activeEngine = nextEngine
+        cachedTranslation = null // Clear cache so re-translating with the new engine fetches freshly
+        lifecycleScope.launch {
+            settingsRepo.updateTranslationEngine(nextEngine)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -126,6 +139,9 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
         }
         lifecycleScope.launch {
             settingsRepo.selectedModel.collect { activeModelName = it }
+        }
+        lifecycleScope.launch {
+            settingsRepo.translationEngine.collect { activeEngine = it }
         }
 
         createNotificationChannel()
@@ -211,7 +227,9 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
                     } else {
                         BubbleUI(
                             isTranslating = isTranslating,
+                            activeEngine = activeEngine,
                             onTap = { handleBubbleTap() },
+                            onToggleEngine = { toggleTranslationEngine() },
                             onLongPress = { enableSelectionMode(true) },
                             onDrag = { dx, dy ->
                                 bubbleX += dx.toInt()
@@ -243,7 +261,13 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
                         translation = currentTranslation,
                         isTranslating = isTranslating,
                         opacityPercent = overlayOpacity,
+                        engine = activeEngine,
                         modelName = activeModelName,
+                        onToggleEngine = {
+                            toggleTranslationEngine()
+                            // Also optionally re-trigger translation with the newly selected engine
+                            handleBubbleTap()
+                        },
                         onClose = { hideTranslationView() },
                         onDrag = { dx, dy ->
                             textOverlayX += dx.toInt()
@@ -418,6 +442,39 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
 
             lastExtractedText = text
 
+            val currentEngine = settingsRepo.translationEngine.first()
+            activeEngine = currentEngine
+
+            // 1. If Google Translate is selected
+            if (currentEngine == "google") {
+                withContext(Dispatchers.Main) {
+                    currentTranslation = "กำลังแปลด้วย Google..."
+                }
+                try {
+                    val rawTranslation = GoogleTranslateHelper.translateToThai(text)
+                    val customPronouns = settingsRepo.customPronouns.first().trim()
+                    val enablePronouns = settingsRepo.googlePronounsEnabled.first()
+                    val finalTranslation = if (enablePronouns && customPronouns.isNotEmpty()) {
+                        GoogleTranslateHelper.applyCustomPronouns(rawTranslation, customPronouns)
+                    } else {
+                        rawTranslation
+                    }
+                    withContext(Dispatchers.Main) {
+                        currentTranslation = finalTranslation
+                        cachedTranslation = finalTranslation
+                        isTranslating = false
+                        scheduleAutoHide()
+                    }
+                } catch (e: Exception) {
+                    Log.e("FloatingService", "Google Translate error", e)
+                    withContext(Dispatchers.Main) {
+                        resetState("Google แปลภาษาผิดพลาด: ${e.message}")
+                    }
+                }
+                return@withContext
+            }
+
+            // 2. If DeepSeek AI is selected
             val userKey = settingsRepo.apiKey.first()
             val apiKey = userKey.trim().ifEmpty { BuildConfig.DEEPSEEK_API_KEY }
             if (apiKey.isNullOrEmpty()) {
@@ -429,14 +486,22 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
 
             val model = settingsRepo.selectedModel.first()
             val customPronouns = settingsRepo.customPronouns.first().trim()
-            val prompt = if (customPronouns.isNotEmpty()) {
-                "Strictly output only the translated text in Thai. " +
-                "No markdown, no conversational filler, no explanations. " +
-                "Dialogue pronouns / speaking style to use: $customPronouns."
+            val customPromptTemplate = settingsRepo.customPrompt.first().trim()
+
+            val prompt = if (customPromptTemplate.isNotEmpty()) {
+                if (customPromptTemplate.contains("{pronouns}")) {
+                    customPromptTemplate.replace("{pronouns}", customPronouns.ifEmpty { "ธรรมชาติ/เป็นกันเอง" })
+                } else if (customPronouns.isNotEmpty()) {
+                    "$customPromptTemplate Pronouns: $customPronouns."
+                } else {
+                    customPromptTemplate
+                }
             } else {
-                "Strictly output only the translated text in Thai. " +
-                "No markdown, no conversational filler, no explanations. " +
-                "Translate dialogue naturally into Thai."
+                if (customPronouns.isNotEmpty()) {
+                    "Translate to Thai game dialogue. Compact and natural. Pronouns: $customPronouns. Output ONLY the Thai translation, nothing else."
+                } else {
+                    "Translate to Thai game dialogue. Compact and natural. Output ONLY the Thai translation, nothing else."
+                }
             }
 
             val request = ChatRequest(
@@ -450,7 +515,7 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
             Log.i("FloatingService", "Sending translation request with model: '$model'")
 
             withContext(Dispatchers.Main) {
-                currentTranslation = "กำลังแปล..."
+                currentTranslation = "กำลังแปลด้วย AI..."
             }
 
             val response = try {
@@ -699,43 +764,78 @@ class FloatingService : LifecycleService(), SavedStateRegistryOwner, ViewModelSt
 @Composable
 fun BubbleUI(
     isTranslating: Boolean,
+    activeEngine: String = "deepseek",
     onTap: () -> Unit,
+    onToggleEngine: () -> Unit = {},
     onLongPress: () -> Unit,
     onDrag: (Float, Float) -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    onDrag(dragAmount.x, dragAmount.y)
+    val isGoogle = activeEngine == "google"
+    val accentColor = if (isGoogle) Color(0xFF10B981) else Color(0xFF60A5FA)
+    val badgeBg = if (isGoogle) Color(0xFF065F46) else Color(0xFF1E3A8A)
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.wrapContentSize()
+    ) {
+        // Main circular bubble
+        Box(
+            modifier = Modifier
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        onDrag(dragAmount.x, dragAmount.y)
+                    }
                 }
-            }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onTap() },
-                    onLongPress = { onLongPress() }
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { onTap() },
+                        onLongPress = { onLongPress() }
+                    )
+                }
+                .size(54.dp)
+                .clip(CircleShape)
+                .background(Color(0xE6111827))
+                .border(2.5.dp, accentColor.copy(alpha = 0.85f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isTranslating) {
+                CircularProgressIndicator(
+                    color = accentColor,
+                    strokeWidth = 2.5.dp,
+                    modifier = Modifier.size(24.dp)
+                )
+            } else {
+                Icon(
+                    imageVector = if (isGoogle) Icons.Default.Translate else Icons.Default.AutoAwesome,
+                    contentDescription = if (isGoogle) "Google Translate (แตะเพื่อแปล)" else "DeepSeek AI (แตะเพื่อแปล)",
+                    tint = Color.White,
+                    modifier = Modifier.size(26.dp)
                 )
             }
-            .size(54.dp)
-            .clip(CircleShape)
-            .background(Color(0xE6111827))
-            .border(2.dp, Color(0x66FFFFFF), CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        if (isTranslating) {
-            CircularProgressIndicator(
-                color = Color(0xFF60A5FA),
-                strokeWidth = 2.5.dp,
-                modifier = Modifier.size(24.dp)
-            )
-        } else {
-            Icon(
-                imageVector = Icons.Default.Translate,
-                contentDescription = "แปลภาษา",
-                tint = Color.White,
-                modifier = Modifier.size(26.dp)
-            )
+        }
+
+        Spacer(modifier = Modifier.height(3.dp))
+
+        // Quick Toggle Engine Pill (Tap to switch between AI and Google instantly!)
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = badgeBg,
+            border = BorderStroke(1.dp, accentColor),
+            shadowElevation = 3.dp,
+            modifier = Modifier.clickable { onToggleEngine() }
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = if (isGoogle) "🌐 G-ฟรี" else "🤖 AI",
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -745,12 +845,19 @@ fun MovableTranslationOverlay(
     translation: String,
     isTranslating: Boolean,
     opacityPercent: Int = 85,
+    engine: String = "deepseek",
     modelName: String = "deepseek-v4-flash",
+    onToggleEngine: () -> Unit = {},
     onClose: () -> Unit,
     onDrag: (Float, Float) -> Unit,
     onDragEnd: () -> Unit
 ) {
     val alpha = (opacityPercent / 100f).coerceIn(0.15f, 1f)
+    val isGoogle = engine == "google"
+    val badgeBorder = if (isGoogle) Color(0xFF34D399) else Color(0xFF60A5FA)
+    val badgeBg = if (isGoogle) Color(0x3310B981) else Color(0x333B82F6)
+    val badgeText = if (isGoogle) Color(0xFFA7F3D0) else Color(0xFF93C5FD)
+
     Card(
         modifier = Modifier
             .widthIn(min = 220.dp, max = 340.dp)
@@ -772,7 +879,7 @@ fun MovableTranslationOverlay(
         Column(
             modifier = Modifier.padding(12.dp)
         ) {
-            // Header Row: Drag handle + Status + Model Badge + Close button
+            // Header Row: Drag handle + Status + Clickable Mode Badge + Close button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -792,19 +899,21 @@ fun MovableTranslationOverlay(
                     Text(
                         text = if (isTranslating) "แปล..." else "คำแปล",
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (isTranslating) Color(0xFF93C5FD) else Color(0xCCFFFFFF),
+                        color = if (isTranslating) badgeText else Color(0xCCFFFFFF),
                         fontWeight = FontWeight.Medium
                     )
                     Spacer(modifier = Modifier.width(6.dp))
+                    // Clickable Engine Badge (Tap to quickly switch and re-translate!)
                     Surface(
                         shape = RoundedCornerShape(4.dp),
-                        color = Color(0x333B82F6),
-                        border = BorderStroke(0.5.dp, Color(0x6660A5FA))
+                        color = badgeBg,
+                        border = BorderStroke(0.5.dp, badgeBorder),
+                        modifier = Modifier.clickable { onToggleEngine() }
                     ) {
                         Text(
-                            text = modelName,
+                            text = if (isGoogle) "🌐 Google (สลับ AI)" else "🤖 $modelName (สลับ G)",
                             fontSize = 10.sp,
-                            color = Color(0xFF93C5FD),
+                            color = badgeText,
                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
                             fontWeight = FontWeight.SemiBold
                         )

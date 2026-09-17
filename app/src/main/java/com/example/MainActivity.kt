@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -131,6 +134,9 @@ fun MainScreen(
     val coroutineScope = rememberCoroutineScope()
     
     var selectedModel by remember { mutableStateOf("deepseek-v4-flash") }
+    var translationEngine by remember { mutableStateOf("deepseek") } // "deepseek" or "google"
+    var customPromptInput by remember { mutableStateOf(SettingsRepository.DEFAULT_AI_PROMPT) }
+    var googlePronounsEnabled by remember { mutableStateOf(true) }
     var customPronounsInput by remember { mutableStateOf("ฉัน / เธอ") }
     var overlayOpacity by remember { mutableStateOf(85) }
     var apiKeyInput by remember { mutableStateOf("") }
@@ -150,6 +156,9 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         selectedModel = settingsRepo.selectedModel.first()
+        translationEngine = settingsRepo.translationEngine.first()
+        customPromptInput = settingsRepo.customPrompt.first()
+        googlePronounsEnabled = settingsRepo.googlePronounsEnabled.first()
         customPronounsInput = settingsRepo.customPronouns.first()
         overlayOpacity = settingsRepo.overlayOpacity.first()
         apiKeyInput = settingsRepo.apiKey.first()
@@ -181,7 +190,127 @@ fun MainScreen(
             }
         }
 
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+        // 1. Translation Engine Selector (DeepSeek AI vs Google Translate)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("เครื่องมือแปลภาษาหลัก (สลับด่วนที่บับเบิลได้ตลอดเวลา)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = translationEngine == "deepseek",
+                        onClick = {
+                            translationEngine = "deepseek"
+                            coroutineScope.launch { settingsRepo.updateTranslationEngine("deepseek") }
+                        },
+                        label = { Text("🤖 DeepSeek AI") },
+                        leadingIcon = { Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = translationEngine == "google",
+                        onClick = {
+                            translationEngine = "google"
+                            coroutineScope.launch { settingsRepo.updateTranslationEngine("google") }
+                        },
+                        label = { Text("🌐 Google (ฟรี/เร็ว)") },
+                        leadingIcon = { Icon(Icons.Default.Translate, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Text(
+                    text = if (translationEngine == "google") {
+                        "✨ โหมด Google: แปลเร็วทันที 0.2 วินาที, ฟรี 100% ไม่เสียโควต้า AI Token (เหมาะกับเมนู/เควสต์/ไอเทม)"
+                    } else {
+                        "✨ โหมด DeepSeek: เข้าใจบริบทบทสนทนา สละสลวยเหมือนคนแปล (เหมาะกับเนื้อเรื่องและคัตซีน)"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+        // 2. Custom Prompt Box for AI (กล่องใส่คำสั่ง Prompt ให้ AI ก่อนแปล)
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("คำสั่ง AI (System Prompt ก่อนแปล)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "ใส่คำสั่งกำกับ AI ตามต้องการ (ใส่ {pronouns} เพื่อแทนที่ด้วยสรรพนามที่ตั้งด้านล่าง)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedTextField(
+                value = customPromptInput,
+                onValueChange = {
+                    customPromptInput = it
+                    coroutineScope.launch { settingsRepo.updateCustomPrompt(it) }
+                },
+                label = { Text("System Prompt คำสั่งแปล") },
+                placeholder = { Text("Translate to Thai...") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 3,
+                maxLines = 6
+            )
+
+            // Prompt Presets Chips
+            Text("เทมเพลตคำสั่งยอดนิยม:", style = MaterialTheme.typography.labelMedium)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SuggestionChip(
+                    onClick = {
+                        val p = "Translate to Thai game dialogue. Compact and natural. Pronouns: {pronouns}. Output ONLY the Thai translation, nothing else."
+                        customPromptInput = p
+                        coroutineScope.launch { settingsRepo.updateCustomPrompt(p) }
+                    },
+                    label = { Text("⚡ ประหยัดโทเค็นขั้นสุด (~18 คำ)") }
+                )
+                SuggestionChip(
+                    onClick = {
+                        val p = "แปลบทสนทนาเกมแฟนตาซีเป็นภาษาไทย สละสลวย เข้าถึงอารมณ์ สรรพนาม: {pronouns} ตอบเฉพาะคำแปลภาษาไทยเท่านั้น"
+                        customPromptInput = p
+                        coroutineScope.launch { settingsRepo.updateCustomPrompt(p) }
+                    },
+                    label = { Text("🎮 RPG แฟนตาซี") }
+                )
+                SuggestionChip(
+                    onClick = {
+                        val p = "แปลบทสนทนาเกมเป็นไทยแบบเพื่อนสนิทคุยกัน เป็นกันเอง คำหยาบได้ตามอารมณ์เกม สรรพนาม: {pronouns} ตอบเฉพาะคำแปล"
+                        customPromptInput = p
+                        coroutineScope.launch { settingsRepo.updateCustomPrompt(p) }
+                    },
+                    label = { Text("🔥 สายลุย/เป็นกันเอง") }
+                )
+                SuggestionChip(
+                    onClick = {
+                        customPromptInput = SettingsRepository.DEFAULT_AI_PROMPT
+                        coroutineScope.launch { settingsRepo.updateCustomPrompt(SettingsRepository.DEFAULT_AI_PROMPT) }
+                    },
+                    label = { Text("🔄 คืนค่าเริ่มต้น") }
+                )
+            }
+        }
+
+        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
         // API Key Field
         OutlinedTextField(
@@ -309,6 +438,29 @@ fun MainScreen(
                         label = { Text(suggestion) }
                     )
                 }
+            }
+
+            // Google Pronoun Replacement Switch
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("แทนที่สรรพนามสำหรับ Google อัตโนมัติ", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Google ไม่มีระบบ Prompt แต่แอปจะช่วยแปลงสรรพนามมาตรฐาน (ผม/คุณ) ให้เป็นคู่สรรพนามที่คุณเลือกให้อัตโนมัติ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = googlePronounsEnabled,
+                    onCheckedChange = {
+                        googlePronounsEnabled = it
+                        coroutineScope.launch { settingsRepo.updateGooglePronounsEnabled(it) }
+                    }
+                )
             }
         }
 

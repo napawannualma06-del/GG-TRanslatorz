@@ -23,9 +23,17 @@ class SettingsRepository(private val context: Context) {
         val AUTO_HIDE_SECONDS = intPreferencesKey("auto_hide_seconds")
         val TEXT_POS_X = intPreferencesKey("text_pos_x")
         val TEXT_POS_Y = intPreferencesKey("text_pos_y")
+        val TRANSLATION_ENGINE = stringPreferencesKey("translation_engine") // "deepseek" or "google"
+        val CUSTOM_PROMPT = stringPreferencesKey("custom_prompt")
+        val GOOGLE_PRONOUNS_ENABLED = androidx.datastore.preferences.core.booleanPreferencesKey("google_pronouns_enabled")
+
+        const val DEFAULT_AI_PROMPT = "Translate to Thai game dialogue. Compact and natural. Pronouns: {pronouns}. Output ONLY the Thai translation, nothing else."
     }
 
     val selectedModel: Flow<String> = context.dataStore.data.map { it[SELECTED_MODEL] ?: "deepseek-v4-flash" }
+    val translationEngine: Flow<String> = context.dataStore.data.map { it[TRANSLATION_ENGINE] ?: "deepseek" }
+    val customPrompt: Flow<String> = context.dataStore.data.map { it[CUSTOM_PROMPT] ?: DEFAULT_AI_PROMPT }
+    val googlePronounsEnabled: Flow<Boolean> = context.dataStore.data.map { it[GOOGLE_PRONOUNS_ENABLED] ?: true }
     val customPronouns: Flow<String> = context.dataStore.data.map { 
         it[CUSTOM_PRONOUNS] ?: it[PRONOUN_THEME] ?: "ฉัน / เธอ" 
     }
@@ -66,6 +74,18 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun updateAutoHideSeconds(seconds: Int) {
         context.dataStore.edit { it[AUTO_HIDE_SECONDS] = seconds }
+    }
+
+    suspend fun updateTranslationEngine(engine: String) {
+        context.dataStore.edit { it[TRANSLATION_ENGINE] = engine }
+    }
+
+    suspend fun updateCustomPrompt(prompt: String) {
+        context.dataStore.edit { it[CUSTOM_PROMPT] = prompt }
+    }
+
+    suspend fun updateGooglePronounsEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[GOOGLE_PRONOUNS_ENABLED] = enabled }
     }
 
     suspend fun updateTextPos(x: Int, y: Int) {
